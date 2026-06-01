@@ -77,6 +77,14 @@ idf.py build flash monitor
 
 Wire the MDB bridge to the peripheral's MDB connector, power the bus, and the VMC starts polling automatically — reset → setup → enable → poll. Press the vend button to attempt a purchase using whichever credit (coin, bill, or cashless) is available.
 
+# VMflow Ecosystem
+
+This repo is one of several in the open **VMflow** platform:
+
+- **[`mdb-esp32-vending-machine-control`](https://github.com/nodestark/mdb-esp32-vending-machine-control)** *(this repo)* — ESP-IDF MDB master / VMC firmware (drives coin, bill, cashless peripherals)
+- [`mdb-esp32-cashless`](https://github.com/nodestark/mdb-esp32-cashless) — ESP-IDF cashless / MDB-slave firmware + VMflow platform (dashboard, Supabase, Android app)
+- [`vmflow-nuttx-apps`](https://github.com/nodestark/vmflow-nuttx-apps) — Apache NuttX home for the full stack (VMC, Cashless, Bill, Coin as builtin apps)
+
 # How to Contribute
 - Contributions are welcome! Open issues, send pull requests, or propose new features
 - Before submitting a pull request, make sure the code complies with the style and quality guidelines defined in the project
@@ -85,5 +93,3 @@ Wire the MDB bridge to the peripheral's MDB connector, power the bus, and the VM
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-</content>
-</invoke>
