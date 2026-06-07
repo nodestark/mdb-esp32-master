@@ -549,7 +549,7 @@ void mdb_vmc_loop(void *pvParameters) {
 				}
 
             } else {
-                if(++reader0x10.poll_fail_count >= 3) reader0x10.machine_state = INACTIVE_STATE;
+                if(++reader0x10.poll_fail_count >= 10) reader0x10.machine_state = INACTIVE_STATE; // 10: tolerate transient bus glitches before dropping the device (3 dropped readers on brief disruption)
             }
 		}
 
@@ -650,8 +650,10 @@ void mdb_vmc_loop(void *pvParameters) {
 			mdb_payload_tx[0] = (0x08 /*Changer*/ & BIT_ADD_SET) | (CHGR_POLL & BIT_CMD_SET);
 			write_payload_9(mdb_payload_tx, 1);
 
-			// short timeout: POLL always blocks full window (reads up to 17 bytes), keep changer responsive
-			len = uart_read_bytes(UART_NUM_2, mdb_payload_rx, 17, pdMS_TO_TICKS(30)); // events + CHK*
+			// POLL blocks the full window (reads up to 17 bytes, usually only ACK arrives).
+			// 60ms over 30ms: real changers can spread a multi-byte event reply past 30ms,
+			// which truncated the read and lost the coin event. Costs ~30ms more per idle poll.
+			len = uart_read_bytes(UART_NUM_2, mdb_payload_rx, 17, pdMS_TO_TICKS(60)); // events + CHK*
 
 			if (len == 1) {
 				// Single byte = changer ACK (nothing to report), no VMC ACK
@@ -679,7 +681,7 @@ void mdb_vmc_loop(void *pvParameters) {
 				}
 
 			} else {
-				if (++reader0x08.poll_fail_count >= 3) {
+				if (++reader0x08.poll_fail_count >= 10) { // 10: tolerate transient bus glitches before dropping the device
 					ESP_LOGW( TAG, "Changer: Poll timeout - resetting");
 					reader0x08.machine_state = INACTIVE_STATE;
 				}
@@ -761,7 +763,9 @@ void mdb_vmc_loop(void *pvParameters) {
 			mdb_payload_tx[0] = (0x30 /*Validator*/ & BIT_ADD_SET) | (VLD_POLL & BIT_CMD_SET);
 			write_payload_9(mdb_payload_tx, 1);
 
-			len = uart_read_bytes(UART_NUM_2, mdb_payload_rx, 17, pdMS_TO_TICKS(30)); // events + CHK*
+			// 60ms over 30ms: a real validator can spread its multi-byte bill event past 30ms,
+			// which truncated the read and lost the bill event. Costs ~30ms more per idle poll.
+			len = uart_read_bytes(UART_NUM_2, mdb_payload_rx, 17, pdMS_TO_TICKS(60)); // events + CHK*
 
 			if (len == 1) {
 				// Single byte = validator ACK
@@ -805,7 +809,7 @@ void mdb_vmc_loop(void *pvParameters) {
 				}
 
 			} else {
-				if (++reader0x30.poll_fail_count >= 3) {
+				if (++reader0x30.poll_fail_count >= 10) { // 10: tolerate transient bus glitches before dropping the device
 					ESP_LOGW( TAG, "Validator: Poll timeout - resetting");
 					reader0x30.machine_state = INACTIVE_STATE;
 				}
