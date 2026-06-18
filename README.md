@@ -13,7 +13,7 @@
 
 This project implements the **MDB master / Vending Machine Controller (VMC)** side of the [Multi-Drop Bus](https://en.wikipedia.org/wiki/Multidrop_bus) protocol. The ESP32 acts as the brain of a micro vending machine: it powers the 9-bit MDB bus and polls real peripherals — coin changer, bill validator, and cashless readers — driving the full deposit → credit → vend → audit cycle. It runs on **any ESP32**, and ships with a bare-metal **KiCad** board that provides the sockets and level/current bridges required for MDB.
 
-The board exposes **two independent MDB ports** — a **controller port** and a **target port** — so the same hardware can act as a VMC (this firmware, driving peripherals on the target port) or as an MDB peripheral on the controller port.
+The board exposes **two independent MDB ports** — a **controller port** and a **target port**. On the **controller port** the board is the master (VMC): it drives the peripherals — coin changer, bill validator, cashless reader. On the **target port** the board is a slave: it emulates a peripheral and talks to the vending machine's VMC/master. This firmware uses the controller port.
 
 ![ESP32-S3 N16R8](esp32-s3n16r8.jpeg)
 
@@ -27,7 +27,7 @@ The board exposes **two independent MDB ports** — a **controller port** and a 
 - **EVA-DTS DEX** interface over a dedicated UART for reading machine audit data
 - **WS2812 status LED** indicating MDB bus state
 - Product-selection button (GPIO0) to trigger a vend on the selected coil
-- **Dual MDB ports** (controller + target): drive peripherals as a VMC, or act as a peripheral on the controller port
+- **Dual MDB ports**: drive peripherals as a VMC on the controller port, or act as a peripheral on the target port
 - Bare-metal **KiCad** hardware: MDB sockets + bridges, designed for low-cost production and customization
 - Part of the open **VMflow** platform — pairs with the [📊 Web Dashboard](https://vmflow.xyz/dashboard) for telemetry, sales, inventory, and AI-powered diagnostics
 
@@ -43,20 +43,20 @@ The companion board (KiCad project [`kicad/`](kicad)) carries the ESP32-S3 modul
 
 ### MDB ports & pinout (default)
 
-Two MDB ports — name reflects what you plug into each:
+Two MDB ports — name reflects the board's role on each:
 
-| Port            | RX  | TX  | Board role        | Used by                         |
-|-----------------|-----|-----|-------------------|---------------------------------|
-| **Target**      | IO4 | IO5 | acts as VMC       | this firmware (drives peripherals) |
-| **Controller**  | IO1 | IO2 | acts as peripheral| connect to an external VMC      |
+| Port            | RX  | TX  | Board role          | Connects to                                  |
+|-----------------|-----|-----|---------------------|----------------------------------------------|
+| **Controller**  | IO1 | IO2 | master (VMC)        | peripherals: coin changer, bill validator, cashless |
+| **Target**      | IO4 | IO5 | slave (peripheral)  | the vending machine's VMC/master             |
 
-This VMC firmware uses the **target port** (peripherals plug in). The **controller port** lets an external vending machine drive the board.
+This VMC firmware uses the **controller port** (master): peripherals plug in here. The **target port** lets the board act as a peripheral driven by an external VMC.
 
 Other pins:
 
 | Signal        | GPIO | Note                         |
 |---------------|------|------------------------------|
-| MDB state LED | 48   | WS2812 status LED            |
+| MDB state LED | 21   | WS2812 status LED            |
 | DEX RX        | 18   | EVA-DTS / DDCMP              |
 | DEX TX        | 17   | EVA-DTS / DDCMP              |
 | Vend button   | 0    | product select (active low)  |
