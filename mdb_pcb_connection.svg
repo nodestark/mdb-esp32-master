@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="900" height="600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600">
+
+  <!-- Background -->
+  <rect x="0" y="0" width="900" height="600" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="450" y="34" text-anchor="middle" font-family="Arial" font-size="24" font-weight="bold" fill="#333">
+    MDB PCB Connection Diagram
+  </text>
+
+  <!-- Arrow marker defs -->
+  <defs>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#4CAF50"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2196F3"/>
+    </marker>
+  </defs>
+
+  <!-- ============================================================ -->
+  <!-- Main PCB Board (top, like reference box) -->
+  <!-- ============================================================ -->
+  <rect x="300" y="70" width="300" height="150" rx="10" fill="#f0f0f0" stroke="#333" stroke-width="3"/>
+  <text x="450" y="115" text-anchor="middle" font-family="Arial" font-size="18" font-weight="bold" fill="#333">
+    MDB PCB
+  </text>
+  <text x="450" y="135" text-anchor="middle" font-family="Arial" font-size="13" fill="#666">
+    Master/Slave Board
+  </text>
+
+  <!-- Left Socket - TARGET (Slave) -> connects to VMC -->
+  <rect x="330" y="165" width="90" height="34" rx="4" fill="#2196F3"/>
+  <text x="375" y="186" text-anchor="middle" font-family="Arial" font-size="12" fill="white" font-weight="bold">
+    TARGET
+  </text>
+
+  <!-- Right Socket - CONTROLLER (Master) -> connects to MDB devices -->
+  <rect x="480" y="165" width="90" height="34" rx="4" fill="#4CAF50"/>
+  <text x="525" y="186" text-anchor="middle" font-family="Arial" font-size="12" fill="white" font-weight="bold">
+    CONTROLLER
+  </text>
+
+  <!-- ============================================================ -->
+  <!-- LEFT path: TARGET -> VMC (slave mode) -->
+  <!-- ============================================================ -->
+  <path d="M 375 199 V 300 H 230 V 400" stroke="#2196F3" stroke-width="3" fill="none" marker-end="url(#arrowBlue)"/>
+
+  <text x="300" y="290" text-anchor="middle" font-family="Arial" font-size="12" fill="#2196F3" font-weight="bold">MDB Protocol</text>
+  <text x="300" y="306" text-anchor="middle" font-family="Arial" font-size="12" fill="#2196F3">(Slave Mode)</text>
+
+  <!-- VMC ellipse (bottom-left, like reference) -->
+  <ellipse cx="230" cy="480" rx="120" ry="70" fill="#e3f2fd" stroke="#2196F3" stroke-width="3"/>
+  <text x="230" y="470" text-anchor="middle" font-family="Arial" font-size="26" font-weight="bold" fill="#0D47A1">VMC</text>
+  <text x="230" y="496" text-anchor="middle" font-family="Arial" font-size="13" fill="#1976D2">Vending Machine</text>
+  <text x="230" y="513" text-anchor="middle" font-family="Arial" font-size="12" fill="#666">Controller</text>
+
+  <!-- ============================================================ -->
+  <!-- RIGHT path: CONTROLLER -> MDB devices (master mode, daisy chain) -->
+  <!-- ============================================================ -->
+  <path d="M 525 199 V 270 H 700" stroke="#4CAF50" stroke-width="3" fill="none"/>
+
+  <text x="600" y="245" text-anchor="middle" font-family="Arial" font-size="12" fill="#4CAF50" font-weight="bold">MDB Protocol</text>
+  <text x="600" y="261" text-anchor="middle" font-family="Arial" font-size="12" fill="#4CAF50">(Master Mode)</text>
+
+  <!-- MDB bus backbone (vertical daisy chain on right) -->
+  <path d="M 700 270 V 520" stroke="#4CAF50" stroke-width="3" fill="none"/>
+
+  <!-- Device 1: Coin Reader -->
+  <line x1="700" y1="300" x2="760" y2="300" stroke="#4CAF50" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <rect x="765" y="280" width="120" height="42" rx="6" fill="#e8f5e9" stroke="#4CAF50" stroke-width="2"/>
+  <text x="825" y="306" text-anchor="middle" font-family="Arial" font-size="13" fill="#2E7D32">Coin Reader</text>
+
+  <!-- Device 2: Bill Reader -->
+  <line x1="700" y1="400" x2="760" y2="400" stroke="#4CAF50" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <rect x="765" y="380" width="120" height="42" rx="6" fill="#e8f5e9" stroke="#4CAF50" stroke-width="2"/>
+  <text x="825" y="406" text-anchor="middle" font-family="Arial" font-size="13" fill="#2E7D32">Bill Reader</text>
+
+  <!-- Device 3: Other MDB Device -->
+  <line x1="700" y1="500" x2="760" y2="500" stroke="#4CAF50" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <rect x="765" y="480" width="120" height="42" rx="6" fill="#e8f5e9" stroke="#4CAF50" stroke-width="2"/>
+  <text x="825" y="506" text-anchor="middle" font-family="Arial" font-size="13" fill="#2E7D32">MDB Device</text>
+
+  <!-- ============================================================ -->
+  <!-- Legend -->
+  <!-- ============================================================ -->
+  <rect x="40" y="70" width="225" height="60" rx="6" fill="none" stroke="#999" stroke-width="1"/>
+  <rect x="52" y="86" width="12" height="12" fill="#2196F3" rx="2"/>
+  <text x="72" y="97" text-anchor="start" font-family="Arial" font-size="12" fill="#666">TARGET = Slave (to VMC)</text>
+  <rect x="52" y="108" width="12" height="12" fill="#4CAF50" rx="2"/>
+  <text x="72" y="119" text-anchor="start" font-family="Arial" font-size="12" fill="#666">CONTROLLER = Master (devices)</text>
+
+</svg>
