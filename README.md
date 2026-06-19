@@ -15,6 +15,8 @@ This project implements the **MDB master / Vending Machine Controller (VMC)** si
 
 The board exposes **two independent MDB ports** — a **controller port** and a **target port**. On the **controller port** the board is the master (VMC): it drives the peripherals — coin changer, bill validator, cashless reader. On the **target port** the board is a slave: it emulates a peripheral and talks to the vending machine's VMC/master. This firmware uses the controller port.
 
+![MDB PCB connection diagram](mdb_pcb_connection.svg)
+
 ![ESP32-S3 N16R8](esp32-s3n16r8.jpeg)
 
 # Features
