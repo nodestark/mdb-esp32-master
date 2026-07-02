@@ -4,30 +4,34 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.x-E7352C?style=for-the-badge&logo=espressif&logoColor=white)](https://docs.espressif.com/projects/esp-idf/)
 
-# VMflow — MDB ESP32 Vending Machine Controller
+# VMflow — MDB ESP32 Controller/Target Bridge
 
-**A micro vending machine controller (VMC) on the ESP32, speaking native MDB to real peripherals.**
+**A dual-port MDB bridge on the ESP32-S3, sitting between a vending machine's VMC and its peripherals.**
 </div>
 
 ---
 
-This project implements the **MDB master / Vending Machine Controller (VMC)** side of the [Multi-Drop Bus](https://en.wikipedia.org/wiki/Multidrop_bus) protocol. The ESP32 acts as the brain of a micro vending machine: it powers the 9-bit MDB bus and polls real peripherals — coin changer, bill validator, and cashless readers — driving the full deposit → credit → vend → audit cycle. It runs on **any ESP32**, and ships with a bare-metal **KiCad** board that provides the sockets and level/current bridges required for MDB.
+This project implements an **MDB bridge** between a vending machine's real VMC and its peripherals over the [Multi-Drop Bus](https://en.wikipedia.org/wiki/Multidrop_bus) protocol. The board exposes **two independent MDB ports**:
 
-The board exposes **two independent MDB ports** — a **controller port** and a **target port**. On the **controller port** the board is the master (VMC): it drives the peripherals — coin changer, bill validator, cashless reader. On the **target port** the board is a slave: it emulates a peripheral and talks to the vending machine's VMC/master. This firmware uses the controller port.
+- **Controller port** — the board is the master: it drives the physical peripherals (coin changer `0x08`, bill validator `0x30`, and an optional external cashless reader `0x10`, e.g. Nayax).
+- **Target port** — the board is a slave: it emulates cashless (`0x10`), coin changer (`0x08`), and bill validator (`0x30`) toward the vending machine's real VMC.
+
+The firmware bridges the two ports: coin/bill events detected on the controller port are relayed as MDB events on the target port (and enable/dispense/escrow commands the other way), and the cashless session is arbitrated between the **VMflow internal payment engine** (BLE phone app, see below) and an **external physical cashless** wired on the controller port — whichever opens a session first owns it until the session ends.
 
 ![ESP32-S3 N16R8](esp32-s3n16r8.jpeg)
 
 # Features
-- **MDB master / VMC** firmware implementing the bus poll loop, ACK/NAK/RET handling, and 9-bit address/mode framing
-- Talks to the standard MDB peripherals:
-  - **Coin Changer** (moedeiro, address `0x08`) — setup, tube status, coin-type enable, deposited credit
-  - **Bill Validator** (noteiro, address `0x30`) — setup, security, bill-type enable, escrow/stacker
-  - **Cashless reader #1** (`0x10`) and **#2** (`0x60`) — reset/setup/poll/vend/reader session flow
-- **Combined cash + cashless** vend logic: accumulates coin and bill credit, deducts on vend, and reports cash sales back to the cashless device for audit
-- **EVA-DTS DEX** interface over a dedicated UART for reading machine audit data
-- **WS2812 status LED** indicating MDB bus state
-- Product-selection button (GPIO0) to trigger a vend on the selected coil
-- **Dual MDB ports**: drive peripherals as a VMC on the controller port, or act as a peripheral on the target port
+- **MDB controller↔target bridge**: bus poll loop, ACK/NAK/RET handling, 9-bit address/mode framing, on both an independent hardware-UART master port and a bit-banged slave port
+- **Coin changer** (`0x08`) and **bill validator** (`0x30`) bridged as repeaters — the target port mirrors the real device's scale factor, decimal places, tube/stacker counts, and forwards type-enable/dispense/escrow commands back to the physical device
+- **Cashless** (`0x10`) arbitrated between two sources sharing the same emulated device on the target port:
+  - the **VMflow internal payment engine** — BLE (NimBLE) phone-app vend/session channel, HMAC-signed
+  - an **external physical cashless** (e.g. Nayax) wired on the controller port
+- **WiFi + MQTT** uplink (`mqtt.vmflow.xyz`) with signed remote-RPC commands (`info`, `safe`, `credit`, `echo`, `restart`, `ota`) and telemetry (`sale`, `vend_fail`, `paxcounter`)
+- **`safe` RPC endpoint** reports money currently held in the coin tubes (live count × credit) and the bill stacker (live bill count; value is best-effort, since MDB never reports per-bill denomination once stacked)
+- **BLE passive-scan foot-traffic counter** ("paxcounter") — periodic scan classifying nearby phones by manufacturer ID/appearance, reported hourly
+- **OTA** over HTTPS (`esp_https_ota`), triggered by the signed `ota` RPC command, pulling a release binary from this repo
+- **WS2812 status LED** indicating provisioning/MQTT state
+- Configurable via `idf.py menuconfig` → **VMflow** → MDB Cashless Device (peripheral address, currency code, scale factor, decimal places)
 - Bare-metal **KiCad** hardware: MDB sockets + bridges, designed for low-cost production and customization
 - Part of the open **VMflow** platform — pairs with the [📊 Web Dashboard](https://vmflow.xyz/dashboard) for telemetry, sales, inventory, and AI-powered diagnostics
 
@@ -47,19 +51,18 @@ Two MDB ports — name reflects the board's role on each:
 
 | Port            | RX  | TX  | Board role          | Connects to                                  |
 |-----------------|-----|-----|---------------------|----------------------------------------------|
-| **Controller**  | IO1 | IO2 | master (VMC)        | peripherals: coin changer, bill validator, cashless |
+| **Controller**  | IO1 | IO2 | master (VMC)        | peripherals: coin changer, bill validator, optional external cashless |
 | **Target**      | IO4 | IO5 | slave (peripheral)  | the vending machine's VMC/master             |
 
-This VMC firmware uses the **controller port** (master): peripherals plug in here. The **target port** lets the board act as a peripheral driven by an external VMC.
+Both ports are driven at once by this firmware: peripherals plug into the **controller port**, the vending machine's real VMC plugs into the **target port**, and the firmware bridges the two.
 
 Other pins:
 
-| Signal        | GPIO | Note                         |
-|---------------|------|------------------------------|
-| MDB state LED | 21   | WS2812 status LED            |
-| DEX RX        | 18   | EVA-DTS / DDCMP              |
-| DEX TX        | 17   | EVA-DTS / DDCMP              |
-| Vend button   | 0    | product select (active low)  |
+| Signal        | GPIO    | Note                                  |
+|---------------|---------|----------------------------------------|
+| MDB state LED | 48      | WS2812 status LED                      |
+| I2C SDA       | 10      | reserved, not used by this firmware yet |
+| I2C SCL       | 11      | reserved, not used by this firmware yet |
 
 MDB UART: 9600 baud, 9 data bits (8 data + 1 mode), even parity emulated for the 9th bit, 1 stop bit.
 
@@ -71,13 +74,14 @@ Build with **ESP-IDF v5.x**:
 
 ```bash
 # Clone the repository
-git clone https://github.com/nodestark/mdb-esp32-vending-machine-control
-cd mdb-esp32-vending-machine-control
+git clone https://github.com/nodestark/mdb-esp32-master
+cd mdb-esp32-master
 
+idf.py menuconfig   # VMflow -> MDB Cashless Device: peripheral address, currency, scale/decimal
 idf.py build flash monitor
 ```
 
-Wire the MDB bridge to the peripheral's MDB connector, power the bus, and the VMC starts polling automatically — reset → setup → enable → poll. Press the vend button to attempt a purchase using whichever credit (coin, bill, or cashless) is available.
+Wire peripherals (coin changer, bill validator, optional external cashless) to the **controller port**, and the vending machine's real VMC to the **target port**. Both sides start polling automatically — reset → setup → enable → poll. Provision WiFi/subdomain/passkey and use the cashless session from the VMflow phone app over BLE, or grant credit remotely via the signed `credit` MQTT RPC command.
 
 # How to Contribute
 - Contributions are welcome! Open issues, send pull requests, or propose new features
