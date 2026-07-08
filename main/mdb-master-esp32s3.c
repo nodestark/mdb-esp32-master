@@ -62,6 +62,8 @@
 #include "led_strip.h"
 #include "nimble.h"
 #include "rpc-auth.h"
+#include "mdb-master-esp32s3.h"
+#include "usb-monitor.h"
 
 #define TAG "mdb_bridge"
 
@@ -572,6 +574,42 @@ static void rpc_publish_safe(void) {
 
     snprintf(topic, sizeof(topic), "domain.vmflow.xyz/%s/rpc/safe", my_subdomain);
     esp_mqtt_client_enqueue(mqtt_client, topic, json, n, 1, 0, 1);
+}
+
+// Read-only bridge state snapshot for the USB CDC1 monitor protocol
+// (usb-monitor.c). Same field reads/math as rpc_publish_info()/
+// rpc_publish_safe() above, just returned to the caller instead of
+// published to MQTT.
+void mdb_bridge_get_snapshot(mdb_bridge_snapshot_t *out) {
+    out->uptime_s = (uint64_t) (esp_timer_get_time() / 1000000);
+    out->free_heap = (uint32_t) esp_get_free_heap_size();
+    out->min_free_heap = (uint32_t) esp_get_minimum_free_heap_size();
+    out->cashless_source = (int) g_active_cashless_source;
+    out->changer_state = (int) reader0x08.machine_state;
+    out->validator_state = (int) reader0x30.machine_state;
+    out->last_sale_price = last_sale_price;
+    out->last_sale_item = last_sale_item;
+    out->last_vend_success_time = (int64_t) last_vend_success_time;
+    strncpy(out->ip_wifi, s_ip_wifi, sizeof(out->ip_wifi) - 1);
+    out->ip_wifi[sizeof(out->ip_wifi) - 1] = '\0';
+
+    out->coin_present = (reader0x08.machine_state != INACTIVE_STATE);
+    out->coin_tube_total_cents = 0;
+    if (out->coin_present) {
+        uint32_t coin_total_scaled = 0;
+        for (int i = 0; i < 16; i++)
+            coin_total_scaled += (uint32_t) reader0x08.tube_counts[i] * reader0x08.coin_credit[i];
+        out->coin_tube_total_cents = TO_SCALE_FACTOR(FROM_SCALE_FACTOR(coin_total_scaled, reader0x08.scale_factor, reader0x08.decimal_places), 1, 2);
+    }
+    out->coin_tube_full = reader0x08.tube_full_status != 0;
+
+    out->bill_present = (reader0x30.machine_state != INACTIVE_STATE);
+    out->bill_stacker_value_cents_since_reset = 0;
+    if (out->bill_present) {
+        out->bill_stacker_value_cents_since_reset = TO_SCALE_FACTOR(FROM_SCALE_FACTOR(reader0x30.credit, reader0x30.scale_factor, reader0x30.decimal_places), 1, 2);
+    }
+    out->bill_stacker_count = reader0x30.stacker_count;
+    out->bill_stacker_full = reader0x30.stacker_full;
 }
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
@@ -2129,6 +2167,8 @@ void mdb_target_task(void *pvParameters) {
 }
 
 void app_main(void) {
+
+    usb_monitor_init();
 
     xLedEventGroup = xEventGroupCreate();
     xWifiEventGroup = xEventGroupCreate();

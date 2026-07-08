@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VMflow MDB Bridge — Live Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #121822; --border: #24303f; --text: #e6edf3;
+    --dim: #7d8b9a; --good: #2ea043; --warn: #d29922; --bad: #f85149; --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--dim); font-size: 12px; }
+  button {
+    background: var(--accent); color: #04101c; border: none; border-radius: 6px;
+    padding: 8px 14px; font-weight: 600; cursor: pointer; font-size: 13px;
+  }
+  button:disabled { background: var(--border); color: var(--dim); cursor: not-allowed; }
+  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  #dot {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--bad); display: inline-block;
+  }
+  #dot.live { background: var(--good); }
+  main {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px; padding: 20px; max-width: 1200px; margin: 0 auto;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim);
+  }
+  .metric { display: flex; justify-content: space-between; padding: 5px 0; }
+  .metric .k { color: var(--dim); }
+  .metric .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  }
+  .badge.ok { background: rgba(46,160,67,.15); color: var(--good); }
+  .badge.mid { background: rgba(210,153,34,.15); color: var(--warn); }
+  .badge.off { background: rgba(125,139,154,.15); color: var(--dim); }
+  .badge.bad { background: rgba(248,81,73,.15); color: var(--bad); }
+  #log {
+    grid-column: 1 / -1; background: #060a0f; border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 14px; height: 140px; overflow-y: auto; font: 12px/1.5 ui-monospace, monospace; color: var(--dim);
+  }
+  #log div.rx { color: var(--accent); }
+  #log div.tx { color: var(--dim); }
+  footer { text-align: center; color: var(--dim); font-size: 11px; padding: 20px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>VMflow MDB Bridge</h1>
+  <span class="sub"><span id="dot"></span> <span id="connState">disconnected</span></span>
+  <button id="connectBtn">Connect via USB</button>
+  <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
+  <span class="sub" id="fwInfo"></span>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2>Bridge</h2>
+    <div class="metric"><span class="k">Cashless source</span><span class="v" id="cashlessSrc">—</span></div>
+    <div class="metric"><span class="k">Uptime</span><span class="v" id="uptime">—</span></div>
+    <div class="metric"><span class="k">Free heap</span><span class="v" id="freeHeap">—</span></div>
+    <div class="metric"><span class="k">Min free heap</span><span class="v" id="minHeap">—</span></div>
+    <div class="metric"><span class="k">WiFi IP</span><span class="v" id="ip">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Coin Changer (0x08)</h2>
+    <div class="metric"><span class="k">State</span><span class="v" id="changerState">—</span></div>
+    <div class="metric"><span class="k">Present</span><span class="v" id="coinPresent">—</span></div>
+    <div class="metric"><span class="k">Tube total</span><span class="v" id="tubeTotal">—</span></div>
+    <div class="metric"><span class="k">Tube full</span><span class="v" id="tubeFull">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Bill Validator (0x30)</h2>
+    <div class="metric"><span class="k">State</span><span class="v" id="validatorState">—</span></div>
+    <div class="metric"><span class="k">Present</span><span class="v" id="billPresent">—</span></div>
+    <div class="metric"><span class="k">Stacker count</span><span class="v" id="stackerCount">—</span></div>
+    <div class="metric"><span class="k">Stacker full</span><span class="v" id="stackerFull">—</span></div>
+    <div class="metric"><span class="k">Stacker value</span><span class="v" id="stackerValue">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Last Sale</h2>
+    <div class="metric"><span class="k">Item</span><span class="v" id="lastItem">—</span></div>
+    <div class="metric"><span class="k">Price</span><span class="v" id="lastPrice">—</span></div>
+    <div class="metric"><span class="k">At</span><span class="v" id="lastTime">—</span></div>
+  </div>
+
+  <div id="log"></div>
+
+</main>
+
+<footer>
+  Talks directly to CDC1 (monitor port) over <a href="https://developer.chrome.com/docs/capabilities/serial" target="_blank">Web Serial</a> — no app install, Chrome/Edge only.
+  Read-only: cannot inject credit or control the bridge.
+</footer>
+
+<script>
+'use strict';
+
+const CASHLESS_SRC = ['NONE', 'INTERNAL', 'EXTERNAL'];
+const MACHINE_STATE = ['INACTIVE', 'DISABLED', 'ENABLED', 'IDLE', 'VEND'];
+const POLL_MS = 1000;
+
+let port, reader, writer, pollTimer, rxBuf = '';
+
+const $ = id => document.getElementById(id);
+const dot = $('dot'), connState = $('connState');
+const connectBtn = $('connectBtn'), disconnectBtn = $('disconnectBtn');
+const log = $('log');
+
+function logLine(dir, text) {
+  const d = document.createElement('div');
+  d.className = dir;
+  d.textContent = (dir === 'tx' ? '> ' : '< ') + text;
+  log.appendChild(d);
+  if (log.children.length > 200) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;
+}
+
+function setConnected(on) {
+  dot.classList.toggle('live', on);
+  connState.textContent = on ? 'live' : 'disconnected';
+  connectBtn.disabled = on;
+  disconnectBtn.disabled = !on;
+}
+
+function stateBadge(el, label, cls) {
+  el.innerHTML = `<span class="badge ${cls}">${label}</span>`;
+}
+
+async function connect() {
+  if (!('serial' in navigator)) {
+    alert('Web Serial not available. Use Chrome or Edge over https:// or localhost.');
+    return;
+  }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    writer = port.writable.getWriter();
+    reader = port.readable.getReader();
+    setConnected(true);
+    readLoop();
+    send('V');
+    send('H');
+    pollTimer = setInterval(pollAll, POLL_MS);
+  } catch (err) {
+    console.error(err);
+    alert('Connect failed: ' + err.message);
+  }
+}
+
+async function disconnect() {
+  clearInterval(pollTimer);
+  try { await reader?.cancel(); } catch (_) {}
+  try { writer?.releaseLock(); } catch (_) {}
+  try { await port?.close(); } catch (_) {}
+  setConnected(false);
+}
+
+async function send(cmd) {
+  if (!writer) return;
+  logLine('tx', cmd);
+  await writer.write(new TextEncoder().encode(cmd + '\n'));
+}
+
+function pollAll() {
+  ['S', 'C', 'B', 'L', 'U'].forEach(send);
+}
+
+async function readLoop() {
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      rxBuf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = rxBuf.indexOf('\n')) >= 0) {
+        const line = rxBuf.slice(0, idx).replace(/\r$/, '');
+        rxBuf = rxBuf.slice(idx + 1);
+        if (line) handleLine(line);
+      }
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setConnected(false);
+  }
+}
+
+function handleLine(line) {
+  logLine('rx', line);
+  const [tag, ...f] = line.split(',');
+  switch (tag) {
+    case 'v':
+      $('fwInfo').textContent = `fw ${f[0]} · ${f[1]}`;
+      break;
+    case 's': {
+      const src = CASHLESS_SRC[+f[0]] ?? f[0];
+      $('cashlessSrc').textContent = src;
+      renderState('changerState', MACHINE_STATE[+f[1]] ?? f[1]);
+      renderState('validatorState', MACHINE_STATE[+f[2]] ?? f[2]);
+      break;
+    }
+    case 'c':
+      $('coinPresent').textContent = f[0] === '1' ? 'yes' : 'no';
+      $('tubeTotal').textContent = (Number(f[1]) / 100).toFixed(2);
+      $('tubeFull').textContent = f[2] === '1' ? 'yes' : 'no';
+      break;
+    case 'b':
+      $('billPresent').textContent = f[0] === '1' ? 'yes' : 'no';
+      $('stackerCount').textContent = f[1];
+      $('stackerFull').textContent = f[2] === '1' ? 'yes' : 'no';
+      $('stackerValue').textContent = (Number(f[3]) / 100).toFixed(2);
+      break;
+    case 'l':
+      $('lastPrice').textContent = f[0] > 0 ? (Number(f[0]) / 100).toFixed(2) : '—';
+      $('lastItem').textContent = f[1] > 0 ? f[1] : '—';
+      $('lastTime').textContent = f[2] > 0 ? new Date(f[2] * 1000).toLocaleTimeString() : '—';
+      break;
+    case 'u':
+      $('uptime').textContent = fmtUptime(+f[0]);
+      $('freeHeap').textContent = fmtBytes(+f[1]);
+      $('minHeap').textContent = fmtBytes(+f[2]);
+      $('ip').textContent = f[3] || '—';
+      break;
+    case 'e':
+      break;
+  }
+}
+
+function renderState(elId, label) {
+  const el = $(elId);
+  const cls = { INACTIVE: 'off', DISABLED: 'off', ENABLED: 'mid', IDLE: 'ok', VEND: 'ok' }[label] || 'bad';
+  stateBadge(el, label, cls);
+}
+
+function fmtUptime(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return `${h}h ${m}m ${sec}s`;
+}
+
+function fmtBytes(n) {
+  return (n / 1024).toFixed(1) + ' KB';
+}
+
+connectBtn.addEventListener('click', connect);
+disconnectBtn.addEventListener('click', disconnect);
+</script>
+
+</body>
+</html>
