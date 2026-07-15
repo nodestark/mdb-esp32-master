@@ -20,6 +20,7 @@
 #include <esp_timer.h>
 #include <rom/ets_sys.h>
 #include <driver/gpio.h>
+#include <soc/gpio_struct.h>
 
 #define TAG "mdb_bill"
 
@@ -186,12 +187,23 @@ static void write_9(uint16_t nth9) {
 static void write_payload_9(uint8_t *payload, uint8_t length) {
     uint8_t checksum = 0x00;
 
+    // Half-duplex: don't listen while we talk. TX (GPIO5) couples into the adjacent
+    // RX pin (GPIO4); the edge gets latched while RX is disabled and, on re-enable,
+    // fires a spurious ISR that desyncs reception - so the next command from the VMC
+    // right after this reply was dropped. Settle, drop garbage, clear edge, re-arm.
+    gpio_intr_disable(PIN_MDB_RX);
+
     for (uint8_t x = 0; x < length; x++) {
         checksum += payload[x];
         write_9(payload[x]);
     }
 
     write_9(BIT_MODE_SET | checksum);   // checksum carries the MODE bit
+
+    ets_delay_us(200);
+    xQueueReset(mdb_rx_queue);
+    GPIO.status_w1tc = (1U << PIN_MDB_RX);   // clear latched RX edge (GPIO4 < 32)
+    gpio_intr_enable(PIN_MDB_RX);
 }
 
 //---------------- BOOT button ---------------------//

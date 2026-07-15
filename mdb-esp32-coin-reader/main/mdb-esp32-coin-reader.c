@@ -20,6 +20,7 @@
 #include <esp_timer.h>
 #include <rom/ets_sys.h>
 #include <driver/gpio.h>
+#include <soc/gpio_struct.h>
 
 #define TAG "mdb_changer"
 
@@ -85,7 +86,7 @@ static changer_state_t changer_state = INACTIVE_STATE;
 static bool     reset_changer_todo = false;
 static uint16_t coin_enable    = 0x0000;   // set by COIN TYPE command
 static uint16_t dispense_enable = 0x0000;  // set by COIN TYPE command
-static uint8_t  tube_count[16]  = {50, 50, 50, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; // 50 coins initially in types 0, 1, 2, 3
+static uint8_t  tube_count[16]  = {0};
 
 static volatile uint32_t pending_coins = 0;
 static QueueHandle_t mdb_rx_queue;
@@ -192,12 +193,28 @@ static void write_9(uint16_t nth9) {
 static void write_payload_9(uint8_t *payload, uint8_t length) {
     uint8_t checksum = 0x00;
 
+    // Half-duplex: don't listen while we talk. The RX falling-edge ISR would
+    // otherwise trigger on our own transmission (TX/RX are coupled on the shared
+    // point-to-point bus) and queue spurious bytes, desyncing the framing so the
+    // very next command from the VMC (the POLL right after this ACK) was lost.
+    gpio_intr_disable(PIN_MDB_RX);
+
     for (uint8_t x = 0; x < length; x++) {
         checksum += payload[x];
         write_9(payload[x]);
     }
 
     write_9(BIT_MODE_SET | checksum);   // checksum carries the MODE bit
+
+    // TX (GPIO5) capacitively couples into the adjacent RX pin (GPIO4). The
+    // resulting edge gets LATCHED in the interrupt status while RX is disabled
+    // and, on re-enable, fires a spurious ISR that desyncs reception - so the
+    // coin dropped exactly one command after every reply. Let it settle, drop
+    // any queued garbage, clear the latched edge, then re-arm clean.
+    esp_rom_delay_us(200);
+    xQueueReset(mdb_rx_queue);
+    GPIO.status_w1tc = (1U << PIN_MDB_RX);   // clear latched RX edge (GPIO4 < 32)
+    gpio_intr_enable(PIN_MDB_RX);
 }
 
 //---------------- BOOT button ---------------------//
