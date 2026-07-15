@@ -1,44 +1,73 @@
 /*
  * VMflow.xyz
  *
- * mdb-master-esp32s3.c - MDB controller <-> target bridge (cashless + coin + bill)
+ * mdb-master-esp32s3.c - MDB controller <-> target bridge (coin + bill)
+ *                        with self-contained cashless emulation on target.
  *
  * Two independent MDB ports:
- *  - controller port (UART2, master): drives physical cashless (0x10), coin
- *    changer (0x08) and bill validator (0x30). Plug-and-play: each device
- *    starts INACTIVE and is probed every cycle until it responds.
+ *  - controller port (UART2, master): drives physical coin changer (0x08)
+ *    and bill validator (0x30). Plug-and-play FSM (INACTIVE→DISABLED→ENABLED).
  *  - target port (bit-banged GPIO, slave): emulates cashless (0x10), coin
- *    changer (0x08) and bill validator (0x30) toward the vending machine VMC.
- *    Always online: responds with defaults so the VMC never sees a missing
- *    device even before a physical device is detected on the controller port.
+ *    changer (0x08) and bill validator (0x30) toward the VMC. Always online.
  *
- * Events bridge via queues in both directions:
- *  - cashless_to_target_queue  : session/vend events → target (exposed extern
- *    so future BLE/MQTT payment engines can push sessions without arbitration
- *    logic living here).
- *  - cashless_from_target_queue: vend requests/outcomes ← target (extern, same
- *    reason — consumer decides what to do with them).
- *  - coin_to_target_queue / coin_from_target_queue : coin changer bridge.
- *  - bill_to_target_queue / bill_from_target_queue : bill validator bridge.
+ * Cashless (0x10) on the target port is fully self-contained — no physical
+ * cashless device is bridged. Credit is granted by BLE (phone app) or MQTT
+ * RPC; vend approve/deny is decided locally based on available funds.
+ *
+ * Connectivity: WiFi STA, MQTT (mqtt.vmflow.xyz), BLE NimBLE (config + pay).
  */
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <driver/gpio.h>
-#include <driver/uart.h>
-#include <rom/ets_sys.h>
-#include <soc/gpio_struct.h>
-#include <esp_log.h>
-#include <esp_timer.h>
+#include <math.h>
+#include <time.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
+#include <freertos/event_groups.h>
+#include <sdkconfig.h>
+#include <esp_log.h>
+#include <esp_system.h>
+#include <esp_app_desc.h>
+#include <esp_ota_ops.h>
+#include <esp_https_ota.h>
+#include <esp_http_client.h>
+#include <esp_crt_bundle.h>
+#include <esp_event.h>
+#include <esp_netif.h>
+#include <esp_timer.h>
+#include <nvs_flash.h>
+#include <rom/ets_sys.h>
+#include <driver/gpio.h>
+#include <driver/uart.h>
+#include <soc/gpio_struct.h>
+#include <esp_wifi.h>
+#include <mqtt_client.h>
+#include <esp_sntp.h>
+#include <led_strip.h>
+
+#include "nimble.h"
+#include "rpc-auth.h"
 
 #define TAG "mdb_bridge"
+
+#define TO_SCALE_FACTOR(p, scale_to, dec_to)       (p / scale_to / pow(10, -(dec_to)))
+#define FROM_SCALE_FACTOR(p, scale_from, dec_from) (p * scale_from * pow(10, -(dec_from)))
+
+//------------------------------------------------------------------------//
+// Pin definitions
+//------------------------------------------------------------------------//
 
 #define PIN_TARGET_RX     GPIO_NUM_4
 #define PIN_TARGET_TX     GPIO_NUM_5
 #define PIN_CONTROLLER_RX GPIO_NUM_1
 #define PIN_CONTROLLER_TX GPIO_NUM_2
+#define PIN_MDB_LED       GPIO_NUM_21
+
+//------------------------------------------------------------------------//
+// MDB constants
+//------------------------------------------------------------------------//
 
 #define ACK          0x00
 #define RET          0xAA
@@ -52,7 +81,6 @@
 #define ADDR_CHANGER   0x08
 #define ADDR_VALIDATOR 0x30
 
-// Cashless Device (0x10) command set
 enum CASHLESS_CMD {
     CSHL_RESET     = 0x00,
     CSHL_SETUP     = 0x01,
@@ -62,7 +90,6 @@ enum CASHLESS_CMD {
     CSHL_EXPANSION = 0x07,
 };
 
-// Coin Changer (0x08) command set
 enum CHANGER_CMD {
     CHGR_RESET       = 0x00,
     CHGR_SETUP       = 0x01,
@@ -73,7 +100,6 @@ enum CHANGER_CMD {
     CHGR_EXPANSION   = 0x07,
 };
 
-// Bill Validator (0x30) command set
 enum VALIDATOR_CMD {
     VLD_RESET     = 0x00,
     VLD_SETUP     = 0x01,
@@ -89,20 +115,13 @@ typedef enum {
     INACTIVE_STATE,
     DISABLED_STATE,
     ENABLED_STATE,
-    IDLE_STATE,   // cashless: session open, waiting for vend request
-    VEND_STATE,   // cashless: vend request sent, waiting for outcome
+    IDLE_STATE,
+    VEND_STATE,
 } device_state_t;
 
-// Physical device snapshots — written only by the controller task, read by
-// the target task at SETUP time to mirror the real device's configuration.
-typedef struct {
-    uint8_t        feature_level;
-    uint16_t       country_code;
-    uint8_t        scale_factor;
-    uint8_t        decimal_places;
-    uint8_t        poll_fail_count;
-    device_state_t state;
-} cashless_t;
+//------------------------------------------------------------------------//
+// Physical device snapshots (written by controller task, read by target)
+//------------------------------------------------------------------------//
 
 typedef struct {
     uint8_t        feature_level;
@@ -130,60 +149,19 @@ typedef struct {
     device_state_t state;
 } validator_t;
 
-static cashless_t  phys_cashless  = { .state = INACTIVE_STATE };
 static changer_t   phys_changer   = { .state = INACTIVE_STATE };
 static validator_t phys_validator = { .state = INACTIVE_STATE };
 
-// Defaults used by the target emulation when no physical device is present.
-#define CASHLESS_DEFAULT_SCALE_FACTOR   1
-#define CASHLESS_DEFAULT_DECIMAL_PLACES 2
-
-static const uint8_t CHANGER_DEFAULT_COIN_CREDIT[16]  = {5, 10, 25, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static const uint8_t CHANGER_DEFAULT_COIN_CREDIT[16]  = {0};
 #define CHANGER_DEFAULT_FEATURE_LEVEL  0x03
 #define CHANGER_DEFAULT_COIN_ROUTING   0x000F
 
-static const uint8_t VALIDATOR_DEFAULT_BILL_CREDIT[16] = {1, 2, 5, 10, 20, 50, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static const uint8_t VALIDATOR_DEFAULT_BILL_CREDIT[16] = {0};
 #define VALIDATOR_DEFAULT_SCALE_FACTOR 0x0064
 
 //------------------------------------------------------------------------//
-// Bridge queues
-//
-// cashless_to_target_queue and cashless_from_target_queue are exposed as
-// non-static so future payment engines (BLE, MQTT) added in other
-// compilation units can produce/consume session events without changing the
-// bridge logic here.
+// Bridge queues (coin + bill only; cashless is self-contained on target)
 //------------------------------------------------------------------------//
-
-typedef enum {
-    CSHL_EVT_BEGIN_SESSION,  // value = funds_available
-    CSHL_EVT_VEND_APPROVED,  // value = item_price
-    CSHL_EVT_VEND_DENIED,
-    CSHL_EVT_SESSION_END,
-    CSHL_EVT_SESSION_CANCEL,
-} cashless_to_target_type_t;
-
-typedef struct {
-    cashless_to_target_type_t type;
-    uint16_t value;
-} cashless_to_target_evt_t;
-
-QueueHandle_t cashless_to_target_queue;   // → target (extern: payment engines push here)
-
-typedef enum {
-    CSHL_REQ_VEND_REQUEST,
-    CSHL_REQ_VEND_CANCEL,
-    CSHL_REQ_VEND_SUCCESS,
-    CSHL_REQ_VEND_FAILURE,
-    CSHL_REQ_SESSION_COMPLETE,
-} cashless_from_target_type_t;
-
-typedef struct {
-    cashless_from_target_type_t type;
-    uint16_t item_price;
-    uint16_t item_number;
-} cashless_from_target_evt_t;
-
-QueueHandle_t cashless_from_target_queue; // ← target (extern: payment engines consume)
 
 typedef struct {
     uint8_t coin_type;
@@ -211,6 +189,103 @@ typedef struct {
 } bill_from_target_evt_t;
 static QueueHandle_t bill_from_target_queue;
 
+// Credit queue: uint16_t funds (device scale units; 0xFFFF = unlimited).
+// Pushed by BLE payment handler and MQTT RPC credit command.
+static QueueHandle_t mdb_session_queue;
+
+//------------------------------------------------------------------------//
+// Connectivity globals
+//------------------------------------------------------------------------//
+
+enum BIT_STATUS {
+    BIT_STATUS_MQTT       = (1 << 0),
+    BIT_STATUS_MDB        = (1 << 1),
+    BIT_STATUS_PSSKEY     = (1 << 2),
+    BIT_STATUS_DOMAIN     = (1 << 3),
+    BIT_STATUS_TRIGGER    = (1 << 4),
+    MASK_STATUS_INSTALLED = (BIT_STATUS_PSSKEY | BIT_STATUS_DOMAIN)
+};
+
+EventGroupHandle_t xLedEventGroup;
+
+char my_subdomain[32];
+#define PASSKEY_LEN 18
+char my_passkey[PASSKEY_LEN + 1];
+
+esp_mqtt_client_handle_t mqtt_client = NULL;
+led_strip_handle_t led_strip;
+
+static char s_ip_wifi[16] = "";
+
+#define WIFI_BACKOFF_MIN_MS  5000
+#define WIFI_BACKOFF_MAX_MS  300000
+static uint32_t wifi_backoff_ms = WIFI_BACKOFF_MIN_MS;
+static esp_timer_handle_t wifi_retry_timer;
+
+#define RPC_FRESHNESS_SEC  10
+#define BLE_FRESHNESS_SEC  60
+
+// Target cashless flags — set by BLE/MQTT tasks, consumed by target task.
+static volatile device_state_t target_cshl_state  = INACTIVE_STATE;
+static volatile bool vend_approved_todo   = false;
+static volatile bool vend_denied_todo     = false;
+static volatile bool session_end_todo     = false;
+static volatile bool session_cancel_todo  = false;
+static volatile bool out_of_sequence_todo = false;
+
+// Big-endian helpers for BLE wire payload.
+static inline uint32_t read_u32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+static inline uint16_t read_u16(const uint8_t *p) {
+    return ((uint16_t)p[0] << 8) | p[1];
+}
+static inline void write_u32(uint8_t *p, uint32_t v) {
+    p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v;
+}
+static inline void write_u16(uint8_t *p, uint16_t v) {
+    p[0] = v >> 8; p[1] = v;
+}
+
+//------------------------------------------------------------------------//
+// BLE payment helpers
+// Wire: 19 bytes — [0] CMD | [1-4] PRICE u32 cents | [5-6] ITEM u16 |
+//                  [7-10] TIME u32 | [11-14] reserved | [15-18] HMAC[:4]
+//------------------------------------------------------------------------//
+
+static void ble_encode_with_passkey(uint8_t cmd, uint16_t item_price,
+                                    uint16_t item_number, uint8_t *out) {
+    uint32_t price_wire = (uint32_t)TO_SCALE_FACTOR(
+        FROM_SCALE_FACTOR(item_price, CONFIG_MDB_SCALE_FACTOR, CONFIG_MDB_DECIMAL_PLACES), 1, 2);
+    out[0] = cmd;
+    write_u32(&out[1], price_wire);
+    write_u16(&out[5], item_number);
+    write_u32(&out[7], (uint32_t)time(NULL));
+    write_u32(&out[11], 0);
+    unsigned char hmac[32];
+    calculate_hmac((const char *)out, 15, hmac);
+    memcpy(out + 15, hmac, 4);
+}
+
+static esp_err_t ble_decode_with_passkey(uint16_t *item_price,
+                                         uint16_t *item_number,
+                                         const uint8_t *in) {
+    unsigned char hmac[32];
+    calculate_hmac((const char *)in, 15, hmac);
+    uint8_t diff = 0;
+    for (int i = 0; i < 4; i++) diff |= hmac[i] ^ in[15 + i];
+    if (diff) return ESP_ERR_INVALID_CRC;
+    int32_t ts = (int32_t)read_u32(&in[7]);
+    if (abs((int32_t)time(NULL) - ts) > BLE_FRESHNESS_SEC) return ESP_ERR_TIMEOUT;
+    if (item_price)
+        *item_price = (uint16_t)TO_SCALE_FACTOR(
+            FROM_SCALE_FACTOR((int32_t)read_u32(&in[1]), 1, 2),
+            CONFIG_MDB_SCALE_FACTOR, CONFIG_MDB_DECIMAL_PLACES);
+    if (item_number)
+        *item_number = read_u16(&in[5]);
+    return ESP_OK;
+}
+
 //------------------------------------------------------------------------//
 // Target port: bit-banged 9-bit MDB I/O (slave toward VMC)
 //------------------------------------------------------------------------//
@@ -219,16 +294,13 @@ static QueueHandle_t mdb_rx_queue;
 
 static void IRAM_ATTR mdb_rx_falling_isr(void *arg) {
     gpio_intr_disable(PIN_TARGET_RX);
-
     uint16_t v = 0;
-    ets_delay_us(156); // skip start bit
-
+    ets_delay_us(156);
     for (int x = 0; x < 9; x++) {
         v |= (gpio_get_level(PIN_TARGET_RX) << x);
         ets_delay_us(104);
     }
     xQueueSendFromISR(mdb_rx_queue, &v, NULL);
-
     gpio_intr_enable(PIN_TARGET_RX);
 }
 
@@ -252,20 +324,15 @@ static void write_9(uint16_t nth9) {
 
 static void write_payload_9(uint8_t *payload, uint8_t length) {
     uint8_t checksum = 0x00;
-
-    // Half-duplex: TX (GPIO5) couples into adjacent RX pin (GPIO4); disable
-    // RX ISR while transmitting to avoid spurious frames desync-ing reception.
     gpio_intr_disable(PIN_TARGET_RX);
-
     for (int x = 0; x < length; x++) {
         checksum += payload[x];
         write_9(payload[x]);
     }
     write_9(BIT_MODE_SET | checksum);
-
     ets_delay_us(200);
     xQueueReset(mdb_rx_queue);
-    GPIO.status_w1tc = (1U << PIN_TARGET_RX); // clear latched RX edge
+    GPIO.status_w1tc = (1U << PIN_TARGET_RX);
     gpio_intr_enable(PIN_TARGET_RX);
 }
 
@@ -275,18 +342,11 @@ static void write_payload_9(uint8_t *payload, uint8_t length) {
 
 static void write_controller_9(uint16_t nth9) {
     uint8_t ones = __builtin_popcount((uint8_t)nth9);
-
-    // The MDB 9th (mode) bit is emulated via UART parity. uart_set_parity()
-    // must settle before the byte is shifted out, so wait for TX to drain
-    // first; otherwise the mode bit of commands following a long read arrives
-    // with stale parity and the peripheral drops them.
     uart_wait_tx_done(UART_NUM_2, pdMS_TO_TICKS(250));
-
     if ((nth9 >> 8) & 1)
         uart_set_parity(UART_NUM_2, ones % 2 ? UART_PARITY_EVEN : UART_PARITY_ODD);
     else
         uart_set_parity(UART_NUM_2, ones % 2 ? UART_PARITY_ODD : UART_PARITY_EVEN);
-
     uart_write_bytes(UART_NUM_2, (uint8_t *)&nth9, 1);
     uart_wait_tx_done(UART_NUM_2, pdMS_TO_TICKS(250));
 }
@@ -302,190 +362,320 @@ static void write_payload_controller_9(uint8_t *payload, uint8_t length) {
 }
 
 //------------------------------------------------------------------------//
-// mdb_controller_task - drives physical cashless, coin changer and bill
-// validator; relays events and commands to/from the target task via queues.
+// LED status task
+//------------------------------------------------------------------------//
+
+#define LED_LVL 30
+
+static void led_status_task(void *pvParameters) {
+    while (1) {
+        EventBits_t b = xEventGroupWaitBits(xLedEventGroup, BIT_STATUS_TRIGGER,
+                                            pdTRUE, pdFALSE, portMAX_DELAY);
+        bool installed = (b & MASK_STATUS_INSTALLED) == MASK_STATUS_INSTALLED;
+        bool net = b & BIT_STATUS_MQTT;
+        bool mdb = b & BIT_STATUS_MDB;
+        if (!installed)      led_strip_set_pixel(led_strip, 0, LED_LVL, LED_LVL, LED_LVL);
+        else if (net && mdb) led_strip_set_pixel(led_strip, 0,       0, LED_LVL,       0);
+        else if (net)        led_strip_set_pixel(led_strip, 0, LED_LVL,       0, LED_LVL);
+        else if (mdb)        led_strip_set_pixel(led_strip, 0,       0,       0, LED_LVL);
+        else                 led_strip_set_pixel(led_strip, 0, LED_LVL,       0,       0);
+        led_strip_refresh(led_strip);
+    }
+}
+
+//------------------------------------------------------------------------//
+// BLE event handlers
+//------------------------------------------------------------------------//
+
+static void ble_pax_event_handler(uint16_t devices_count) {
+    char topic[64], msg[48], line[128];
+    snprintf(msg, sizeof(msg), "%u:%lld", devices_count, (long long)time(NULL));
+    rpc_sign_text(msg, line, sizeof(line));
+    snprintf(topic, sizeof(topic), "domain.vmflow.xyz/%s/paxcounter", my_subdomain);
+    esp_mqtt_client_enqueue(mqtt_client, topic, line, 0, 1, 0, 1);
+}
+
+static void ble_event_handler(char *ble_payload) {
+    switch ((uint8_t)ble_payload[0]) {
+    case 0x00: { // set domain
+        nvs_handle_t h;
+        if (nvs_open("vmflow", NVS_READWRITE, &h) != ESP_OK) break;
+        size_t s_len;
+        if (nvs_get_str(h, "domain", NULL, &s_len) != ESP_OK) {
+            snprintf(my_subdomain, sizeof(my_subdomain), "%s", ble_payload + 1);
+            nvs_set_str(h, "domain", my_subdomain);
+            nvs_commit(h);
+            char myhost[64];
+            snprintf(myhost, sizeof(myhost), "%s.vmflow.xyz", my_subdomain);
+            ble_set_device_name(myhost);
+            xEventGroupSetBits(xLedEventGroup, BIT_STATUS_DOMAIN | BIT_STATUS_TRIGGER);
+        }
+        nvs_close(h);
+        break;
+    }
+    case 0x01: { // set passkey
+        nvs_handle_t h;
+        if (nvs_open("vmflow", NVS_READWRITE, &h) != ESP_OK) break;
+        size_t s_len;
+        if (nvs_get_str(h, "passkey", NULL, &s_len) != ESP_OK) {
+            snprintf(my_passkey, sizeof(my_passkey), "%s", ble_payload + 1);
+            nvs_set_str(h, "passkey", my_passkey);
+            nvs_commit(h);
+            xEventGroupSetBits(xLedEventGroup, BIT_STATUS_PSSKEY | BIT_STATUS_TRIGGER);
+        }
+        nvs_close(h);
+        break;
+    }
+    case 0x02: { // BLE credit — open unlimited session
+        uint16_t funds = 0xFFFF;
+        xQueueSend(mdb_session_queue, &funds, 0);
+        break;
+    }
+    case 0x03: { // BLE vend approve (signed by phone)
+        // Only ever raise the flag; never clear it, so a decision already
+        // pending for the target task cannot be lost to this cross-task write.
+        if (ble_decode_with_passkey(NULL, NULL, (const uint8_t *)ble_payload) == ESP_OK
+            && target_cshl_state == VEND_STATE)
+            vend_approved_todo = true;
+        break;
+    }
+    case 0x04: // BLE session cancel
+        if (target_cshl_state >= IDLE_STATE) session_cancel_todo = true;
+        break;
+    case 0x06: { // set WiFi SSID
+        esp_wifi_disconnect();
+        wifi_config_t wifi_cfg = {0};
+        esp_wifi_get_config(WIFI_IF_STA, &wifi_cfg);
+        snprintf((char *)wifi_cfg.sta.ssid, sizeof(wifi_cfg.sta.ssid), "%s", ble_payload + 1);
+        esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg);
+        break;
+    }
+    case 0x07: { // set WiFi password + connect
+        wifi_config_t wifi_cfg = {0};
+        esp_wifi_get_config(WIFI_IF_STA, &wifi_cfg);
+        snprintf((char *)wifi_cfg.sta.password, sizeof(wifi_cfg.sta.password), "%s", ble_payload + 1);
+        esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg);
+        esp_wifi_connect();
+        break;
+    }
+    }
+}
+
+//------------------------------------------------------------------------//
+// WiFi / IP event handlers
+//------------------------------------------------------------------------//
+
+static void wifi_retry_cb(void *arg) { esp_wifi_connect(); }
+
+static void wifi_event_handler(void *arg, esp_event_base_t base,
+                               int32_t event_id, void *event_data) {
+    switch (event_id) {
+    case WIFI_EVENT_STA_START:
+        esp_wifi_connect();
+        break;
+    case WIFI_EVENT_STA_CONNECTED:
+        wifi_backoff_ms = WIFI_BACKOFF_MIN_MS;
+        break;
+    case WIFI_EVENT_STA_DISCONNECTED:
+        esp_timer_start_once(wifi_retry_timer, (uint64_t)wifi_backoff_ms * 1000);
+        wifi_backoff_ms = wifi_backoff_ms * 2 < WIFI_BACKOFF_MAX_MS
+                          ? wifi_backoff_ms * 2 : WIFI_BACKOFF_MAX_MS;
+        break;
+    }
+}
+
+static void ip_event_handler(void *arg, esp_event_base_t base,
+                             int32_t event_id, void *event_data) {
+    if (event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *ev = (ip_event_got_ip_t *)event_data;
+        snprintf(s_ip_wifi, sizeof(s_ip_wifi), IPSTR, IP2STR(&ev->ip_info.ip));
+        ESP_LOGI(TAG, "WiFi IP: %s", s_ip_wifi);
+    } else if (event_id == IP_EVENT_STA_LOST_IP) {
+        s_ip_wifi[0] = '\0';
+    }
+}
+
+//------------------------------------------------------------------------//
+// MQTT / RPC
+//------------------------------------------------------------------------//
+
+static void rpc_publish_info(void) {
+    const esp_app_desc_t *app = esp_app_get_description();
+
+    // Coin vault value in cents (scale=1, dec=2)
+    uint32_t coin_vault_cents = 0;
+    if (phys_changer.state != INACTIVE_STATE && phys_changer.scale_factor > 0) {
+        uint32_t raw = 0;
+        for (int i = 0; i < 16; i++)
+            raw += (uint32_t)phys_changer.tube_counts[i] * phys_changer.coin_credit[i];
+        coin_vault_cents = (uint32_t)TO_SCALE_FACTOR(
+            FROM_SCALE_FACTOR(raw, phys_changer.scale_factor, phys_changer.decimal_places),
+            1, 2);
+    }
+
+    char topic[64], json[512];
+    int n = snprintf(json, sizeof(json),
+        "{\"version\":\"%s\",\"uptime_s\":%lld,"
+        "\"free_heap\":%lu,\"min_free_heap\":%lu,"
+        "\"ip_wifi\":\"%s\","
+        "\"coin_vault_cents\":%lu,\"bill_stacker_count\":%u}",
+        app->version,
+        (long long)(esp_timer_get_time() / 1000000),
+        (unsigned long)esp_get_free_heap_size(),
+        (unsigned long)esp_get_minimum_free_heap_size(),
+        s_ip_wifi,
+        (unsigned long)coin_vault_cents,
+        phys_validator.stacker_count);
+
+    snprintf(topic, sizeof(topic), "domain.vmflow.xyz/%s/rpc/info", my_subdomain);
+    esp_mqtt_client_enqueue(mqtt_client, topic, json, n, 1, 0, 1);
+}
+
+// Publish a signed "price:item:timestamp" event (vend_ok / vend_fail / sale).
+// price/item are in device scale units; converted to cents on the wire.
+static void publish_signed_event(const char *event, uint16_t price, uint16_t item) {
+    if (!mqtt_client) return;
+    uint32_t pw = (uint32_t)TO_SCALE_FACTOR(
+        FROM_SCALE_FACTOR(price, CONFIG_MDB_SCALE_FACTOR, CONFIG_MDB_DECIMAL_PLACES), 1, 2);
+    char topic[64], msg[64], line[160];
+    snprintf(msg, sizeof(msg), "%lu:%u:%lld",
+             (unsigned long)pw, item, (long long)time(NULL));
+    rpc_sign_text(msg, line, sizeof(line));
+    snprintf(topic, sizeof(topic), "domain.vmflow.xyz/%s/%s", my_subdomain, event);
+    esp_mqtt_client_enqueue(mqtt_client, topic, line, 0, 1, 0, 1);
+}
+
+static void ota_task(void *arg) {
+    const char *url = (const char *)arg;
+    esp_http_client_config_t http_cfg = {
+        .url = url,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .timeout_ms = 30000,
+        .keep_alive_enable = true,
+        .buffer_size = 2048,
+        .buffer_size_tx = 4096,
+    };
+    esp_https_ota_config_t ota_cfg = { .http_config = &http_cfg };
+    if (esp_https_ota(&ota_cfg) == ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        esp_restart();
+    } else {
+        vTaskDelete(NULL);
+    }
+}
+
+static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
+                               int32_t event_id, void *event_data) {
+    esp_mqtt_event_handle_t event = event_data;
+    esp_mqtt_client_handle_t client = event->client;
+
+    switch ((esp_mqtt_event_id_t)event_id) {
+    case MQTT_EVENT_CONNECTED: {
+        char topic[64], buf[32];
+        snprintf(topic, sizeof(topic), "%s.vmflow.xyz/#", my_subdomain);
+        esp_mqtt_client_subscribe(client, topic, 0);
+        snprintf(topic, sizeof(topic), "domain.vmflow.xyz/%s/status", my_subdomain);
+        snprintf(buf, sizeof(buf), "online,%d", (int)esp_reset_reason());
+        esp_mqtt_client_enqueue(client, topic, buf, 0, 1, 1, 1);
+        xEventGroupSetBits(xLedEventGroup, BIT_STATUS_MQTT | BIT_STATUS_TRIGGER);
+        break;
+    }
+    case MQTT_EVENT_DISCONNECTED:
+        xEventGroupClearBits(xLedEventGroup, BIT_STATUS_MQTT);
+        xEventGroupSetBits(xLedEventGroup, BIT_STATUS_TRIGGER);
+        break;
+
+    case MQTT_EVENT_DATA: {
+        if (event->topic_len <= 4) break;
+        if (strncmp(event->topic + event->topic_len - 4, "/rpc", 4) != 0) break;
+
+        int len = event->data_len < 127 ? event->data_len : 127;
+        char *last_colon = memrchr(event->data, ':', len);
+        if (!last_colon) break;
+
+        int prefix_len = last_colon - event->data;
+        char hmac[65];
+        snprintf(hmac, sizeof(hmac), "%.*s", len - prefix_len - 1, last_colon + 1);
+
+        if (!rpc_verify_hmac(event->data, prefix_len, hmac)) {
+            ESP_LOGW(TAG, "RPC rejected: bad HMAC");
+            break;
+        }
+
+        char cmd[32], args[64];
+        unsigned int ts;
+        if (sscanf(event->data, "%31[^:]:%63[^:]:%u", cmd, args, &ts) != 3) break;
+
+        long dt = (long)(time(NULL) - (time_t)ts);
+        if (labs(dt) > RPC_FRESHNESS_SEC) {
+            ESP_LOGW(TAG, "RPC rejected: stale (dt=%ld)", dt);
+            break;
+        }
+
+        bool has_args = (args[0] != '\0' && strcmp(args, "-") != 0);
+        char topic_confirm[64];
+        snprintf(topic_confirm, sizeof(topic_confirm),
+                 "domain.vmflow.xyz/%s/rpc/confirm", my_subdomain);
+
+        if (strcmp(cmd, "info") == 0) {
+            rpc_publish_info();
+        } else if (strcmp(cmd, "credit") == 0 && has_args) {
+            int32_t price_wire = (int32_t)strtol(args, NULL, 10);
+            uint16_t funds = (uint16_t)TO_SCALE_FACTOR(
+                FROM_SCALE_FACTOR(price_wire, 1, 2),
+                CONFIG_MDB_SCALE_FACTOR, CONFIG_MDB_DECIMAL_PLACES);
+            xQueueSend(mdb_session_queue, &funds, 0);
+            esp_mqtt_client_enqueue(client, topic_confirm, "ok", 0, 1, 0, 1);
+        } else if (strcmp(cmd, "oos") == 0) {
+            out_of_sequence_todo = true;
+            esp_mqtt_client_enqueue(client, topic_confirm, "ok", 0, 1, 0, 1);
+        } else if (strcmp(cmd, "echo") == 0) {
+            char topic[64], buf[24];
+            snprintf(topic, sizeof(topic), "domain.vmflow.xyz/%s/rpc/echo", my_subdomain);
+            snprintf(buf, sizeof(buf), "%u", ts);
+            esp_mqtt_client_enqueue(client, topic, buf, 0, 0, 0, 1);
+        } else if (strcmp(cmd, "restart") == 0) {
+            esp_mqtt_client_publish(client, topic_confirm, "ok", 0, 1, 0);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            esp_restart();
+        } else if (strcmp(cmd, "ota") == 0) {
+            static char ota_url[160];
+            if (has_args)
+                snprintf(ota_url, sizeof(ota_url),
+                    "https://github.com/nodestark/mdb-esp32-master/releases/download/%s/mdb-master-esp32s3.bin",
+                    args);
+            else
+                snprintf(ota_url, sizeof(ota_url),
+                    "https://github.com/nodestark/mdb-esp32-master/releases/latest/download/mdb-master-esp32s3.bin");
+            esp_mqtt_client_enqueue(client, topic_confirm, "ok", 0, 1, 0, 1);
+            xTaskCreate(ota_task, "ota_task", 8192, ota_url, 5, NULL);
+        }
+        break;
+    }
+    case MQTT_EVENT_ERROR:
+        if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT)
+            ESP_LOGE(TAG, "MQTT TCP error: errno=%d",
+                     event->error_handle->esp_transport_sock_errno);
+        break;
+    default:
+        break;
+    }
+}
+
+//------------------------------------------------------------------------//
+// mdb_controller_task — drives coin changer (0x08) and bill validator (0x30)
 //------------------------------------------------------------------------//
 
 void mdb_controller_task(void *pvParameters) {
     uint8_t tx[36], rx[36];
     size_t  len;
-    const uint8_t await = 125; // ms
+    const uint8_t await = 125;
 
     for (;;) {
         uart_flush(UART_NUM_2);
 
         //------------------------------------------------------------------//
-        // 0x10 Cashless (plug and play)
-        //------------------------------------------------------------------//
-        if (phys_cashless.state == INACTIVE_STATE) {
-
-            tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_RESET & BIT_CMD_SET);
-            write_payload_controller_9(tx, 1);
-            len = uart_read_bytes(UART_NUM_2, rx, 1, pdMS_TO_TICKS(await));
-
-            if (len == 1) {
-                tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_POLL & BIT_CMD_SET);
-                write_payload_controller_9(tx, 1);
-                len = uart_read_bytes(UART_NUM_2, rx, 2, pdMS_TO_TICKS(await));
-
-                if (len == 2 && rx[0] == 0x00 /*Just Reset*/) {
-                    write_controller_9(ACK | BIT_MODE_SET);
-
-                    // SETUP Config Data
-                    tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_SETUP & BIT_CMD_SET);
-                    tx[1] = 0x00; tx[2] = 1; tx[3] = 0; tx[4] = 0; tx[5] = 0b00000001;
-                    write_payload_controller_9(tx, 6);
-                    len = uart_read_bytes(UART_NUM_2, rx, 9, pdMS_TO_TICKS(await));
-
-                    if (len == 9) {
-                        write_controller_9(ACK | BIT_MODE_SET);
-                        phys_cashless.feature_level   = rx[1];
-                        phys_cashless.country_code    = ((uint16_t)rx[2] << 8) | rx[3];
-                        phys_cashless.scale_factor    = rx[4];
-                        phys_cashless.decimal_places  = rx[5];
-                        phys_cashless.state           = DISABLED_STATE;
-                        ESP_LOGI(TAG, "Cashless: Config scale=%d dec=%d",
-                                 phys_cashless.scale_factor, phys_cashless.decimal_places);
-                    }
-                }
-            }
-
-        } else if (phys_cashless.state == DISABLED_STATE) {
-
-            // SETUP Max/Min Prices
-            tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_SETUP & BIT_CMD_SET);
-            tx[1] = 0x01; tx[2] = 0xFF; tx[3] = 0xFF; tx[4] = 0x00; tx[5] = 0x00;
-            write_payload_controller_9(tx, 6);
-            len = uart_read_bytes(UART_NUM_2, rx, 1, pdMS_TO_TICKS(await));
-            if (len != 1) { phys_cashless.state = INACTIVE_STATE; goto next_changer; }
-
-            // EXPANSION Request ID
-            tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_EXPANSION & BIT_CMD_SET);
-            tx[1] = 0x00;
-            memcpy(&tx[2], "VMF", 3);
-            memset(&tx[5], ' ', 12);
-            memset(&tx[17], ' ', 12);
-            tx[29] = '0'; tx[30] = '1';
-            write_payload_controller_9(tx, 31);
-            len = uart_read_bytes(UART_NUM_2, rx, 31, pdMS_TO_TICKS(await));
-            if (len == 31) write_controller_9(ACK | BIT_MODE_SET);
-
-            // Reader Enable
-            tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_READER & BIT_CMD_SET);
-            tx[1] = 0x01;
-            write_payload_controller_9(tx, 2);
-            len = uart_read_bytes(UART_NUM_2, rx, 1, pdMS_TO_TICKS(await));
-            if (len != 1) { phys_cashless.state = INACTIVE_STATE; goto next_changer; }
-
-            phys_cashless.state = ENABLED_STATE;
-            ESP_LOGI(TAG, "Cashless: Reader Enabled");
-
-        } else { // ENABLED / IDLE / VEND
-
-            // Relay pending commands from the target to the physical device.
-            cashless_from_target_evt_t req;
-            if (xQueueReceive(cashless_from_target_queue, &req, 0)) {
-                switch (req.type) {
-                case CSHL_REQ_VEND_REQUEST:
-                    if (phys_cashless.state == IDLE_STATE) {
-                        tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_VEND & BIT_CMD_SET);
-                        tx[1] = 0x00;
-                        tx[2] = req.item_price >> 8; tx[3] = req.item_price;
-                        tx[4] = req.item_number >> 8; tx[5] = req.item_number;
-                        write_payload_controller_9(tx, 6);
-                        len = uart_read_bytes(UART_NUM_2, rx, 1, pdMS_TO_TICKS(await));
-                        if (len == 1) phys_cashless.state = VEND_STATE;
-                    }
-                    break;
-                case CSHL_REQ_VEND_CANCEL:
-                    tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_VEND & BIT_CMD_SET);
-                    tx[1] = 0x01;
-                    write_payload_controller_9(tx, 2);
-                    uart_read_bytes(UART_NUM_2, rx, 1, pdMS_TO_TICKS(await));
-                    break;
-                case CSHL_REQ_VEND_SUCCESS:
-                    tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_VEND & BIT_CMD_SET);
-                    tx[1] = 0x02;
-                    tx[2] = req.item_number >> 8; tx[3] = req.item_number;
-                    write_payload_controller_9(tx, 4);
-                    uart_read_bytes(UART_NUM_2, rx, 1, pdMS_TO_TICKS(await));
-                    phys_cashless.state = IDLE_STATE;
-                    break;
-                case CSHL_REQ_VEND_FAILURE:
-                    tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_VEND & BIT_CMD_SET);
-                    tx[1] = 0x03;
-                    write_payload_controller_9(tx, 2);
-                    uart_read_bytes(UART_NUM_2, rx, 1, pdMS_TO_TICKS(await));
-                    phys_cashless.state = IDLE_STATE;
-                    break;
-                case CSHL_REQ_SESSION_COMPLETE:
-                    tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_VEND & BIT_CMD_SET);
-                    tx[1] = 0x04;
-                    write_payload_controller_9(tx, 2);
-                    uart_read_bytes(UART_NUM_2, rx, 1, pdMS_TO_TICKS(await));
-                    break;
-                }
-                uart_flush(UART_NUM_2);
-            }
-
-            // Poll the physical cashless device.
-            tx[0] = (ADDR_CASHLESS & BIT_ADD_SET) | (CSHL_POLL & BIT_CMD_SET);
-            write_payload_controller_9(tx, 1);
-            len = uart_read_bytes(UART_NUM_2, rx, 4, pdMS_TO_TICKS(await));
-
-            if (len >= 1) {
-                phys_cashless.poll_fail_count = 0;
-
-                if (rx[0] == 0x03 && len >= 4) { // Begin Session
-                    write_controller_9(ACK | BIT_MODE_SET);
-                    uint16_t funds = ((uint16_t)rx[1] << 8) | rx[2];
-                    phys_cashless.state = IDLE_STATE;
-                    cashless_to_target_evt_t evt = { CSHL_EVT_BEGIN_SESSION, funds };
-                    xQueueSend(cashless_to_target_queue, &evt, 0);
-                    ESP_LOGI(TAG, "Cashless: Begin Session funds=%u", funds);
-
-                } else if (rx[0] == 0x04 && len >= 2) { // Session Cancel Request
-                    write_controller_9(ACK | BIT_MODE_SET);
-                    cashless_to_target_evt_t evt = { CSHL_EVT_SESSION_CANCEL, 0 };
-                    xQueueSend(cashless_to_target_queue, &evt, 0);
-
-                } else if (rx[0] == 0x05 && len >= 4) { // Vend Approved
-                    write_controller_9(ACK | BIT_MODE_SET);
-                    uint16_t price = ((uint16_t)rx[1] << 8) | rx[2];
-                    cashless_to_target_evt_t evt = { CSHL_EVT_VEND_APPROVED, price };
-                    xQueueSend(cashless_to_target_queue, &evt, 0);
-
-                } else if (rx[0] == 0x06 && len >= 2) { // Vend Denied
-                    write_controller_9(ACK | BIT_MODE_SET);
-                    phys_cashless.state = IDLE_STATE;
-                    cashless_to_target_evt_t evt = { CSHL_EVT_VEND_DENIED, 0 };
-                    xQueueSend(cashless_to_target_queue, &evt, 0);
-
-                } else if (rx[0] == 0x07 && len >= 2) { // End Session
-                    write_controller_9(ACK | BIT_MODE_SET);
-                    phys_cashless.state = ENABLED_STATE;
-                    cashless_to_target_evt_t evt = { CSHL_EVT_SESSION_END, 0 };
-                    xQueueSend(cashless_to_target_queue, &evt, 0);
-
-                } else if (rx[0] == 0x0B && len >= 2) { // Out of Sequence
-                    write_controller_9(ACK | BIT_MODE_SET);
-                    phys_cashless.state = INACTIVE_STATE;
-                }
-                // 0x00 ACK (nothing to report) — no action needed
-
-            } else {
-                if (++phys_cashless.poll_fail_count >= 10) {
-                    phys_cashless.state = INACTIVE_STATE;
-                    ESP_LOGW(TAG, "Cashless: poll timeout, resetting");
-                }
-            }
-        }
-
-        next_changer:
-        uart_flush(UART_NUM_2);
-
-        //------------------------------------------------------------------//
-        // 0x08 Coin Changer (plug and play)
+        // 0x08 Coin Changer
         //------------------------------------------------------------------//
         if (phys_changer.state == INACTIVE_STATE) {
 
@@ -497,11 +687,9 @@ void mdb_controller_task(void *pvParameters) {
                 tx[0] = (ADDR_CHANGER & BIT_ADD_SET) | (CHGR_POLL & BIT_CMD_SET);
                 write_payload_controller_9(tx, 1);
                 len = uart_read_bytes(UART_NUM_2, rx, 2, pdMS_TO_TICKS(await));
-
                 if (len == 2 && rx[0] == 0x0B) {
                     write_controller_9(ACK | BIT_MODE_SET);
                     phys_changer.state = DISABLED_STATE;
-                    ESP_LOGI(TAG, "Changer: Just Reset");
                 }
             }
 
@@ -514,18 +702,12 @@ void mdb_controller_task(void *pvParameters) {
             if (len == 24) {
                 uart_flush_input(UART_NUM_2);
                 write_controller_9(ACK | BIT_MODE_SET);
-
                 phys_changer.feature_level     = rx[0];
                 phys_changer.country_code      = ((uint16_t)rx[1] << 8) | rx[2];
                 phys_changer.scale_factor      = rx[3];
                 phys_changer.decimal_places    = rx[4];
                 phys_changer.coin_type_routing = ((uint16_t)rx[5] << 8) | rx[6];
                 for (uint8_t i = 0; i < 16; i++) phys_changer.coin_credit[i] = rx[7 + i];
-
-                ESP_LOGI(TAG, "Changer Setup: feature=%d scale=%d dec=%d routing=0x%04X",
-                         phys_changer.feature_level, phys_changer.scale_factor,
-                         phys_changer.decimal_places, phys_changer.coin_type_routing);
-
                 vTaskDelay(pdMS_TO_TICKS(5));
 
                 tx[0] = (ADDR_CHANGER & BIT_ADD_SET) | (CHGR_TUBE_STATUS & BIT_CMD_SET);
@@ -537,7 +719,6 @@ void mdb_controller_task(void *pvParameters) {
                     phys_changer.tube_full_status = ((uint16_t)rx[0] << 8) | rx[1];
                     for (uint8_t i = 0; i < 16; i++) phys_changer.tube_counts[i] = rx[2 + i];
                 }
-
                 vTaskDelay(pdMS_TO_TICKS(5));
 
                 tx[0] = (ADDR_CHANGER & BIT_ADD_SET) | (CHGR_COIN_TYPE & BIT_CMD_SET);
@@ -547,7 +728,9 @@ void mdb_controller_task(void *pvParameters) {
                 if (len == 5) write_controller_9(ACK | BIT_MODE_SET);
 
                 phys_changer.state = ENABLED_STATE;
-                ESP_LOGI(TAG, "Changer Enabled");
+                ESP_LOGI(TAG, "Changer Enabled: scale=%d dec=%d routing=0x%04X",
+                         phys_changer.scale_factor, phys_changer.decimal_places,
+                         phys_changer.coin_type_routing);
             }
 
         } else {
@@ -571,35 +754,29 @@ void mdb_controller_task(void *pvParameters) {
 
             tx[0] = (ADDR_CHANGER & BIT_ADD_SET) | (CHGR_POLL & BIT_CMD_SET);
             write_payload_controller_9(tx, 1);
-            len = uart_read_bytes(UART_NUM_2, rx, 17, pdMS_TO_TICKS(60));
+            len = uart_read_bytes(UART_NUM_2, rx, 17, pdMS_TO_TICKS(await));
 
             if (len == 1) {
                 phys_changer.poll_fail_count = 0;
-
             } else if (len > 1) {
                 phys_changer.poll_fail_count = 0;
                 write_controller_9(ACK | BIT_MODE_SET);
 
                 if (len == 2 && rx[0] == 0x0B) {
                     phys_changer.state = INACTIVE_STATE;
-                    ESP_LOGW(TAG, "Changer reset detected");
                 } else {
                     uint8_t dep_types[16], dep_routing[16], dep_count = 0;
-
                     for (uint8_t i = 0; i + 1 < len; i++) {
                         uint8_t ev = rx[i];
                         if ((ev & 0xC0) == 0x40) {
-                            uint8_t type = ev & 0x0F;
                             if (dep_count < 16) {
-                                dep_types[dep_count]   = type;
+                                dep_types[dep_count]   = ev & 0x0F;
                                 dep_routing[dep_count] = (ev >> 4) & 0x03;
                                 dep_count++;
                             }
-                            ESP_LOGI(TAG, "Coin: type=%d routing=%d", type, (ev >> 4) & 0x03);
                             i++;
                         }
                     }
-
                     if (dep_count > 0) {
                         tx[0] = (ADDR_CHANGER & BIT_ADD_SET) | (CHGR_TUBE_STATUS & BIT_CMD_SET);
                         write_payload_controller_9(tx, 1);
@@ -619,11 +796,10 @@ void mdb_controller_task(void *pvParameters) {
                         }
                     }
                 }
-
             } else {
                 if (++phys_changer.poll_fail_count >= 10) {
                     phys_changer.state = INACTIVE_STATE;
-                    ESP_LOGW(TAG, "Changer: poll timeout, resetting");
+                    ESP_LOGW(TAG, "Changer: poll timeout");
                 }
             }
         }
@@ -631,7 +807,7 @@ void mdb_controller_task(void *pvParameters) {
         uart_flush(UART_NUM_2);
 
         //------------------------------------------------------------------//
-        // 0x30 Bill Validator (plug and play)
+        // 0x30 Bill Validator
         //------------------------------------------------------------------//
         if (phys_validator.state == INACTIVE_STATE) {
 
@@ -643,11 +819,9 @@ void mdb_controller_task(void *pvParameters) {
                 tx[0] = (ADDR_VALIDATOR & BIT_ADD_SET) | (VLD_POLL & BIT_CMD_SET);
                 write_payload_controller_9(tx, 1);
                 len = uart_read_bytes(UART_NUM_2, rx, 2, pdMS_TO_TICKS(await));
-
                 if (len == 2 && rx[0] == 0x06) {
                     write_controller_9(ACK | BIT_MODE_SET);
                     phys_validator.state = DISABLED_STATE;
-                    ESP_LOGI(TAG, "Validator: Just Reset");
                 }
             }
 
@@ -660,17 +834,12 @@ void mdb_controller_task(void *pvParameters) {
             if (len == 28) {
                 uart_flush_input(UART_NUM_2);
                 write_controller_9(ACK | BIT_MODE_SET);
-
                 phys_validator.feature_level         = rx[0];
                 phys_validator.country_code          = ((uint16_t)rx[1] << 8) | rx[2];
                 phys_validator.scale_factor          = ((uint16_t)rx[3] << 8) | rx[4];
                 phys_validator.decimal_places        = rx[5];
                 phys_validator.bill_stacker_capacity = ((uint16_t)rx[6] << 8) | rx[7];
                 for (uint8_t i = 0; i < 16; i++) phys_validator.bill_credit[i] = rx[11 + i];
-
-                ESP_LOGI(TAG, "Validator Setup: feature=%d scale=%d dec=%d capacity=%d",
-                         phys_validator.feature_level, phys_validator.scale_factor,
-                         phys_validator.decimal_places, phys_validator.bill_stacker_capacity);
 
                 tx[0] = (ADDR_VALIDATOR & BIT_ADD_SET) | (VLD_BILL_TYPE & BIT_CMD_SET);
                 tx[1] = 0xFF; tx[2] = 0xFF; tx[3] = 0xFF; tx[4] = 0xFF;
@@ -679,7 +848,9 @@ void mdb_controller_task(void *pvParameters) {
 
                 if (len == 1) {
                     phys_validator.state = ENABLED_STATE;
-                    ESP_LOGI(TAG, "Validator Enabled");
+                    ESP_LOGI(TAG, "Validator Enabled: scale=%d dec=%d capacity=%d",
+                             phys_validator.scale_factor, phys_validator.decimal_places,
+                             phys_validator.bill_stacker_capacity);
 
                     tx[0] = (ADDR_VALIDATOR & BIT_ADD_SET) | (VLD_STACKER & BIT_CMD_SET);
                     write_payload_controller_9(tx, 1);
@@ -714,18 +885,16 @@ void mdb_controller_task(void *pvParameters) {
 
             tx[0] = (ADDR_VALIDATOR & BIT_ADD_SET) | (VLD_POLL & BIT_CMD_SET);
             write_payload_controller_9(tx, 1);
-            len = uart_read_bytes(UART_NUM_2, rx, 17, pdMS_TO_TICKS(60));
+            len = uart_read_bytes(UART_NUM_2, rx, 17, pdMS_TO_TICKS(await));
 
             if (len == 1) {
                 phys_validator.poll_fail_count = 0;
-
             } else if (len > 1) {
                 phys_validator.poll_fail_count = 0;
                 write_controller_9(ACK | BIT_MODE_SET);
 
                 if (len == 2 && rx[0] == 0x06) {
                     phys_validator.state = INACTIVE_STATE;
-                    ESP_LOGW(TAG, "Validator reset detected");
                 } else {
                     bool bill_stacked = false;
                     for (uint8_t i = 0; i + 1 < len; i++) {
@@ -734,7 +903,6 @@ void mdb_controller_task(void *pvParameters) {
                             bill_stacked = true;
                             bill_stack_evt_t evt = { ev & 0x0F };
                             xQueueSend(bill_to_target_queue, &evt, 0);
-                            ESP_LOGI(TAG, "Bill stacked: type=%d", ev & 0x0F);
                         } else if ((ev & 0x90) == 0x90) {
                             tx[0] = (ADDR_VALIDATOR & BIT_ADD_SET) | (VLD_ESCROW & BIT_CMD_SET);
                             tx[1] = 0x01;
@@ -742,7 +910,6 @@ void mdb_controller_task(void *pvParameters) {
                             uart_read_bytes(UART_NUM_2, rx, 1, pdMS_TO_TICKS(await));
                         }
                     }
-
                     if (bill_stacked) {
                         tx[0] = (ADDR_VALIDATOR & BIT_ADD_SET) | (VLD_STACKER & BIT_CMD_SET);
                         write_payload_controller_9(tx, 1);
@@ -755,11 +922,10 @@ void mdb_controller_task(void *pvParameters) {
                         }
                     }
                 }
-
             } else {
                 if (++phys_validator.poll_fail_count >= 10) {
                     phys_validator.state = INACTIVE_STATE;
-                    ESP_LOGW(TAG, "Validator: poll timeout, resetting");
+                    ESP_LOGW(TAG, "Validator: poll timeout");
                 }
             }
         }
@@ -767,10 +933,8 @@ void mdb_controller_task(void *pvParameters) {
 }
 
 //------------------------------------------------------------------------//
-// mdb_target_task - emulates cashless (0x10), coin changer (0x08) and bill
-// validator (0x30) toward the VMC. All three devices are always online;
-// the VMC drives the init sequence (RESET → SETUP → POLL → READER_ENABLE).
-// Physical device config is mirrored when available; defaults otherwise.
+// mdb_target_task — emulates 0x10/0x08/0x30 toward VMC, always online.
+// Cashless is self-contained: credit via mdb_session_queue, local approve.
 //------------------------------------------------------------------------//
 
 #define COIN_POLL_QSIZE 32
@@ -782,33 +946,32 @@ void mdb_target_task(void *pvParameters) {
 
     uint8_t payload[36];
 
-    // ---- Cashless (0x10) state ----
-    device_state_t cshl_state       = INACTIVE_STATE;
-    bool     cshl_reset_todo        = false;
-    int64_t  cshl_session_start_us  = 0;
-    uint16_t cshl_item_price        = 0;
-    uint16_t cshl_item_number       = 0;
+    // ---- Cashless (0x10) ----
+    bool     cshl_reset_todo       = false;
+    int64_t  cshl_session_start_us = 0;
+    uint16_t cshl_funds_available  = 0;
+    uint16_t cshl_item_price       = 0;
+    uint16_t cshl_item_number      = 0;
 
-    // ---- Coin changer (0x08) state ----
-    bool     coin_reset_todo        = false;
-    uint16_t coin_enable            = 0x0000;
-    uint16_t coin_dispense_enable   = 0x0000;
+    // ---- Coin changer (0x08) ----
+    bool     coin_reset_todo      = false;
+    uint16_t coin_enable          = 0x0000;
+    uint16_t coin_dispense_enable = 0x0000;
     uint8_t  coin_poll_q[COIN_POLL_QSIZE];
     uint8_t  coin_poll_q_head = 0, coin_poll_q_tail = 0;
 
-    // ---- Bill validator (0x30) state ----
-    bool     bill_reset_todo        = false;
-    uint16_t bill_enable            = 0x0000;
-    uint16_t bill_escrow_enable     = 0x0000;
+    // ---- Bill validator (0x30) ----
+    bool     bill_reset_todo      = false;
+    uint16_t bill_enable          = 0x0000;
+    uint16_t bill_escrow_enable   = 0x0000;
     uint8_t  bill_poll_q[BILL_POLL_QSIZE];
     uint8_t  bill_poll_q_head = 0, bill_poll_q_tail = 0;
 
     for (;;) {
-        uint8_t  checksum     = 0x00;
-        uint8_t  available_tx = 0;
+        uint8_t checksum     = 0x00;
+        uint8_t available_tx = 0;
 
         uint16_t incoming = read_9(&checksum);
-
         if (!(incoming & BIT_MODE_SET)) continue;
         if ((uint8_t)incoming == ACK)   continue;
         if ((uint8_t)incoming == RET)   continue;
@@ -818,103 +981,95 @@ void mdb_target_task(void *pvParameters) {
         uint8_t cmd  = incoming & BIT_CMD_SET;
 
         //================================================================//
-        // 0x10 Cashless (emulated, always online)
+        // 0x10 Cashless — self-contained, always online
         //================================================================//
         if (addr == ADDR_CASHLESS) {
-
             switch (cmd) {
             case CSHL_RESET: {
                 if (read_9(NULL) != checksum) continue;
-                cshl_reset_todo = true;
-                cshl_state = INACTIVE_STATE;
-                ESP_LOGI(TAG, "Target Cashless: RESET");
-                break; // ACK
+                cshl_reset_todo   = true;
+                target_cshl_state = INACTIVE_STATE;
+                xEventGroupClearBits(xLedEventGroup, BIT_STATUS_MDB);
+                xEventGroupSetBits(xLedEventGroup, BIT_STATUS_TRIGGER);
+                break;
             }
             case CSHL_SETUP: {
                 switch (read_9(&checksum)) {
                 case 0x00: { // Config Data
-                    read_9(&checksum); // vmc_feature_level
-                    read_9(&checksum); // columns
-                    read_9(&checksum); // rows
-                    read_9(&checksum); // display_info
+                    read_9(&checksum); read_9(&checksum);
+                    read_9(&checksum); read_9(&checksum);
                     if (read_9(NULL) != checksum) continue;
-
-                    bool phys = (phys_cashless.state != INACTIVE_STATE);
-                    payload[0] = 0x01; // Reader Config
-                    payload[1] = 1;    // Feature Level
-                    payload[2] = 0xFF; payload[3] = 0xFF; // country code
-                    payload[4] = phys ? phys_cashless.scale_factor   : CASHLESS_DEFAULT_SCALE_FACTOR;
-                    payload[5] = phys ? phys_cashless.decimal_places : CASHLESS_DEFAULT_DECIMAL_PLACES;
-                    payload[6] = 3;          // Response Time
-                    payload[7] = 0b00001001; // Miscellaneous Options
+                    payload[0] = 0x01;
+                    payload[1] = 1;
+                    payload[2] = CONFIG_MDB_CURRENCY_CODE >> 8;
+                    payload[3] = CONFIG_MDB_CURRENCY_CODE & 0xFF;
+                    payload[4] = CONFIG_MDB_SCALE_FACTOR;
+                    payload[5] = CONFIG_MDB_DECIMAL_PLACES;
+                    payload[6] = 3;
+                    payload[7] = 0b00001001;
                     available_tx = 8;
-                    cshl_state = DISABLED_STATE;
-                    ESP_LOGI(TAG, "Target Cashless: SETUP Config (phys=%d)", phys);
+                    target_cshl_state = DISABLED_STATE;
                     break;
                 }
-                case 0x01: { // Max/Min Prices
+                case 0x01: // Max/Min Prices
                     read_9(&checksum); read_9(&checksum);
                     read_9(&checksum); read_9(&checksum);
                     if (read_9(NULL) != checksum) continue;
-                    ESP_LOGI(TAG, "Target Cashless: SETUP MaxMin");
-                    break; // ACK
-                }
+                    break;
                 }
                 break;
             }
             case CSHL_POLL: {
                 if (read_9(NULL) != checksum) continue;
-
                 if (cshl_reset_todo) {
-                    cshl_reset_todo = false;
-                    payload[0]     = 0x00; // Just Reset
-                    available_tx   = 1;
-                    cshl_state     = DISABLED_STATE;
-
-                } else {
-                    cashless_to_target_evt_t evt;
-                    if (xQueueReceive(cashless_to_target_queue, &evt, 0)) {
-                        switch (evt.type) {
-                        case CSHL_EVT_BEGIN_SESSION:
-                            cshl_state = IDLE_STATE;
-                            cshl_session_start_us = esp_timer_get_time();
-                            payload[0] = 0x03;
-                            payload[1] = evt.value >> 8;
-                            payload[2] = evt.value;
-                            available_tx = 3;
-                            ESP_LOGI(TAG, "Target Cashless: Begin Session funds=%u", evt.value);
-                            break;
-                        case CSHL_EVT_VEND_APPROVED:
-                            payload[0] = 0x05;
-                            payload[1] = evt.value >> 8;
-                            payload[2] = evt.value;
-                            available_tx = 3;
-                            break;
-                        case CSHL_EVT_VEND_DENIED:
-                            payload[0] = 0x06;
-                            available_tx = 1;
-                            cshl_state = IDLE_STATE;
-                            break;
-                        case CSHL_EVT_SESSION_END:
-                            payload[0] = 0x07;
-                            available_tx = 1;
-                            cshl_state = ENABLED_STATE;
-                            break;
-                        case CSHL_EVT_SESSION_CANCEL:
-                            payload[0] = 0x04;
-                            available_tx = 1;
-                            break;
-                        }
-                    } else if (cshl_state >= IDLE_STATE) {
-                        // Safety timeout: release session if idle for 60 s.
-                        if (esp_timer_get_time() - cshl_session_start_us > 60LL * 1000000LL) {
-                            payload[0] = 0x04; // Session Cancel Request
-                            available_tx = 1;
-                            cshl_state = IDLE_STATE;
-                            cshl_session_start_us = esp_timer_get_time();
-                            ESP_LOGW(TAG, "Target Cashless: session idle timeout");
-                        }
+                    cshl_reset_todo   = false;
+                    payload[0]        = 0x00;
+                    available_tx      = 1;
+                    target_cshl_state = DISABLED_STATE;
+                } else if (target_cshl_state == ENABLED_STATE) {
+                    // Only begin a session while the reader is ENABLED by the
+                    // VMC. Pulling credit in any other state sends an
+                    // out-of-sequence Begin Session and loses the payment.
+                    uint16_t funds;
+                    if (xQueueReceive(mdb_session_queue, &funds, 0)) {
+                        cshl_funds_available  = funds;
+                        target_cshl_state     = IDLE_STATE;
+                        cshl_session_start_us = esp_timer_get_time();
+                        payload[0] = 0x03;
+                        payload[1] = funds >> 8;
+                        payload[2] = funds;
+                        available_tx = 3;
+                        xEventGroupSetBits(xLedEventGroup, BIT_STATUS_MDB | BIT_STATUS_TRIGGER);
                     }
+                } else if (session_cancel_todo) {
+                    session_cancel_todo = false;
+                    payload[0] = 0x04;
+                    available_tx = 1;
+                } else if (vend_approved_todo) {
+                    vend_approved_todo = false;
+                    payload[0] = 0x05;
+                    payload[1] = cshl_item_price >> 8;
+                    payload[2] = cshl_item_price;
+                    available_tx = 3;
+                } else if (vend_denied_todo) {
+                    vend_denied_todo  = false;
+                    target_cshl_state = IDLE_STATE;
+                    payload[0] = 0x06;
+                    available_tx = 1;
+                } else if (session_end_todo) {
+                    session_end_todo  = false;
+                    target_cshl_state = ENABLED_STATE;
+                    payload[0] = 0x07;
+                    available_tx = 1;
+                    xEventGroupClearBits(xLedEventGroup, BIT_STATUS_MDB);
+                    xEventGroupSetBits(xLedEventGroup, BIT_STATUS_TRIGGER);
+                } else if (out_of_sequence_todo) {
+                    out_of_sequence_todo = false;
+                    payload[0] = 0x0B;
+                    available_tx = 1;
+                } else if (target_cshl_state >= IDLE_STATE) {
+                    if (esp_timer_get_time() - cshl_session_start_us > 60LL * 1000000LL)
+                        session_cancel_todo = true;
                 }
                 break;
             }
@@ -924,46 +1079,66 @@ void mdb_target_task(void *pvParameters) {
                     cshl_item_price  = ((uint16_t)read_9(&checksum) << 8) | read_9(&checksum);
                     cshl_item_number = ((uint16_t)read_9(&checksum) << 8) | read_9(&checksum);
                     if (read_9(NULL) != checksum) continue;
-                    cshl_state = VEND_STATE;
-                    cashless_from_target_evt_t out = { CSHL_REQ_VEND_REQUEST, cshl_item_price, cshl_item_number };
-                    xQueueSend(cashless_from_target_queue, &out, 0);
-                    ESP_LOGI(TAG, "Target Cashless: Vend Request price=%u item=%u", cshl_item_price, cshl_item_number);
-                    break; // ACK
+                    target_cshl_state = VEND_STATE;
+                    // Auto approve/deny based on available funds. 0xFFFF is an
+                    // unlimited (BLE) session: defer the decision to the phone
+                    // (BLE cmd 0x03). Any other amount decides locally.
+                    if (cshl_funds_available != 0xFFFF) {
+                        if (cshl_item_price <= cshl_funds_available)
+                            vend_approved_todo = true;
+                        else
+                            vend_denied_todo = true;
+                    }
+                    uint8_t b[19];
+                    ble_encode_with_passkey(0x0A, cshl_item_price, cshl_item_number, b);
+                    ble_notify_send((char *)b, sizeof(b));
+                    ESP_LOGI(TAG, "Target: Vend Request price=%u item=%u",
+                             cshl_item_price, cshl_item_number);
+                    break;
                 }
-                case 0x01: { // Vend Cancel
+                case 0x01: // Vend Cancel
                     if (read_9(NULL) != checksum) continue;
-                    cashless_from_target_evt_t out = { CSHL_REQ_VEND_CANCEL, 0, 0 };
-                    xQueueSend(cashless_from_target_queue, &out, 0);
-                    break; // ACK
-                }
+                    vend_denied_todo = true;
+                    break;
                 case 0x02: { // Vend Success
                     cshl_item_number = ((uint16_t)read_9(&checksum) << 8) | read_9(&checksum);
                     if (read_9(NULL) != checksum) continue;
-                    cshl_state = IDLE_STATE;
-                    cashless_from_target_evt_t out = { CSHL_REQ_VEND_SUCCESS, cshl_item_price, cshl_item_number };
-                    xQueueSend(cashless_from_target_queue, &out, 0);
-                    ESP_LOGI(TAG, "Target Cashless: Vend Success item=%u", cshl_item_number);
-                    break; // ACK
+                    target_cshl_state = IDLE_STATE;
+                    // Deduct the vended price so multi-vend sessions keep an
+                    // accurate balance (unlimited 0xFFFF sessions stay open).
+                    if (cshl_funds_available != 0xFFFF &&
+                        cshl_item_price <= cshl_funds_available)
+                        cshl_funds_available -= cshl_item_price;
+                    uint8_t b[19];
+                    ble_encode_with_passkey(0x0B, cshl_item_price, cshl_item_number, b);
+                    ble_notify_send((char *)b, sizeof(b));
+                    publish_signed_event("vend_ok", cshl_item_price, cshl_item_number);
+                    ESP_LOGI(TAG, "Target: Vend Success item=%u", cshl_item_number);
+                    break;
                 }
                 case 0x03: { // Vend Failure
                     if (read_9(NULL) != checksum) continue;
-                    cshl_state = IDLE_STATE;
-                    cashless_from_target_evt_t out = { CSHL_REQ_VEND_FAILURE, cshl_item_price, cshl_item_number };
-                    xQueueSend(cashless_from_target_queue, &out, 0);
-                    break; // ACK
+                    target_cshl_state = IDLE_STATE;
+                    uint8_t b[19];
+                    ble_encode_with_passkey(0x0C, cshl_item_price, cshl_item_number, b);
+                    ble_notify_send((char *)b, sizeof(b));
+                    publish_signed_event("vend_fail", cshl_item_price, cshl_item_number);
+                    break;
                 }
                 case 0x04: { // Session Complete
                     if (read_9(NULL) != checksum) continue;
-                    cashless_from_target_evt_t out = { CSHL_REQ_SESSION_COMPLETE, 0, 0 };
-                    xQueueSend(cashless_from_target_queue, &out, 0);
-                    ESP_LOGI(TAG, "Target Cashless: Session Complete");
-                    break; // ACK
+                    session_end_todo = true;
+                    uint8_t b[19];
+                    ble_encode_with_passkey(0x0D, cshl_item_price, cshl_item_number, b);
+                    ble_notify_send((char *)b, sizeof(b));
+                    break;
                 }
-                case 0x05: { // Cash Sale (informational)
-                    read_9(&checksum); read_9(&checksum);
-                    read_9(&checksum); read_9(&checksum);
+                case 0x05: { // Cash Sale → MQTT only
+                    uint16_t sp = ((uint16_t)read_9(&checksum) << 8) | read_9(&checksum);
+                    uint16_t si = ((uint16_t)read_9(&checksum) << 8) | read_9(&checksum);
                     if (read_9(NULL) != checksum) continue;
-                    break; // ACK
+                    publish_signed_event("sale", sp, si);
+                    break;
                 }
                 }
                 break;
@@ -972,15 +1147,18 @@ void mdb_target_task(void *pvParameters) {
                 switch (read_9(&checksum)) {
                 case 0x00: // Reader Disable
                     if (read_9(NULL) != checksum) continue;
-                    cshl_state = DISABLED_STATE;
-                    break; // ACK
+                    target_cshl_state = DISABLED_STATE;
+                    xEventGroupClearBits(xLedEventGroup, BIT_STATUS_MDB);
+                    xEventGroupSetBits(xLedEventGroup, BIT_STATUS_TRIGGER);
+                    break;
                 case 0x01: // Reader Enable
                     if (read_9(NULL) != checksum) continue;
-                    cshl_state = ENABLED_STATE;
-                    break; // ACK
+                    target_cshl_state = ENABLED_STATE;
+                    xEventGroupSetBits(xLedEventGroup, BIT_STATUS_MDB | BIT_STATUS_TRIGGER);
+                    break;
                 case 0x02: // Reader Cancel
                     if (read_9(NULL) != checksum) continue;
-                    payload[0] = 0x08; // Cancelled
+                    payload[0] = 0x08;
                     available_tx = 1;
                     break;
                 }
@@ -988,10 +1166,10 @@ void mdb_target_task(void *pvParameters) {
             }
             case CSHL_EXPANSION: {
                 uint8_t sub = (uint8_t)read_9(&checksum);
-                if (sub == 0x00) { // Request ID
+                if (sub == 0x00) {
                     for (uint8_t x = 0; x < 29; x++) read_9(&checksum);
                     if (read_9(NULL) != checksum) continue;
-                    payload[0] = 0x09; // Peripheral ID
+                    payload[0] = 0x09;
                     memcpy(&payload[1], "VMF", 3);
                     memset(&payload[4], ' ', 12);
                     memset(&payload[16], ' ', 12);
@@ -1000,43 +1178,41 @@ void mdb_target_task(void *pvParameters) {
                 }
                 break;
             }
-            default:
-                continue;
+            default: continue;
             }
 
         //================================================================//
-        // 0x08 Coin Changer (emulated, always online)
+        // 0x08 Coin Changer — emulated, always online
         //================================================================//
         } else if (addr == ADDR_CHANGER) {
-
             switch (cmd) {
             case CHGR_RESET: {
                 if (read_9(NULL) != checksum) continue;
                 coin_reset_todo      = true;
                 coin_enable          = 0x0000;
                 coin_dispense_enable = 0x0000;
-                ESP_LOGI(TAG, "Target Changer: RESET");
                 break;
             }
             case CHGR_SETUP: {
                 if (read_9(NULL) != checksum) continue;
                 bool phys = (phys_changer.state != INACTIVE_STATE);
+                // Report the real changer's country/currency code (see validator).
+                uint16_t chg_cc = phys ? phys_changer.country_code : CONFIG_MDB_CURRENCY_CODE;
                 payload[0] = phys ? phys_changer.feature_level : CHANGER_DEFAULT_FEATURE_LEVEL;
-                payload[1] = 0xFF; payload[2] = 0xFF;
+                payload[1] = chg_cc >> 8; payload[2] = chg_cc & 0xFF;
                 payload[3] = phys ? phys_changer.scale_factor : 1;
                 payload[4] = phys ? phys_changer.decimal_places : 2;
-                payload[5] = phys ? (phys_changer.coin_type_routing >> 8) : (CHANGER_DEFAULT_COIN_ROUTING >> 8);
+                payload[5] = phys ? (phys_changer.coin_type_routing >> 8)  : (CHANGER_DEFAULT_COIN_ROUTING >> 8);
                 payload[6] = phys ? (phys_changer.coin_type_routing & 0xFF) : (CHANGER_DEFAULT_COIN_ROUTING & 0xFF);
                 for (int i = 0; i < 16; i++)
                     payload[7 + i] = phys ? phys_changer.coin_credit[i] : CHANGER_DEFAULT_COIN_CREDIT[i];
                 available_tx = 23;
-                ESP_LOGI(TAG, "Target Changer: SETUP (phys=%d)", phys);
                 break;
             }
             case CHGR_TUBE_STATUS: {
                 if (read_9(NULL) != checksum) continue;
                 bool phys = (phys_changer.state != INACTIVE_STATE);
-                payload[0] = phys ? (phys_changer.tube_full_status >> 8) : 0;
+                payload[0] = phys ? (phys_changer.tube_full_status >> 8)  : 0;
                 payload[1] = phys ? (phys_changer.tube_full_status & 0xFF) : 0;
                 for (int i = 0; i < 16; i++)
                     payload[2 + i] = phys ? phys_changer.tube_counts[i] : 0;
@@ -1057,8 +1233,8 @@ void mdb_target_task(void *pvParameters) {
                 }
                 if (coin_reset_todo) {
                     coin_reset_todo = false;
-                    payload[0]     = 0x0B;
-                    available_tx   = 1;
+                    payload[0]   = 0x0B;
+                    available_tx = 1;
                 } else {
                     while (coin_poll_q_head != coin_poll_q_tail && available_tx < 16) {
                         payload[available_tx++] = coin_poll_q[coin_poll_q_tail];
@@ -1075,7 +1251,6 @@ void mdb_target_task(void *pvParameters) {
                 coin_dispense_enable = ((uint16_t)di_h << 8) | di_l;
                 coin_from_target_evt_t req = { COIN_REQ_TYPE_ENABLE, coin_enable, coin_dispense_enable, 0 };
                 xQueueSend(coin_from_target_queue, &req, 0);
-                ESP_LOGI(TAG, "Target Changer: COIN_TYPE enable=0x%04X", coin_enable);
                 break;
             }
             case CHGR_DISPENSE: {
@@ -1105,24 +1280,27 @@ void mdb_target_task(void *pvParameters) {
             }
 
         //================================================================//
-        // 0x30 Bill Validator (emulated, always online)
+        // 0x30 Bill Validator — emulated, always online
         //================================================================//
         } else if (addr == ADDR_VALIDATOR) {
-
             switch (cmd) {
             case VLD_RESET: {
                 if (read_9(NULL) != checksum) continue;
                 bill_reset_todo    = true;
                 bill_enable        = 0x0000;
                 bill_escrow_enable = 0x0000;
-                ESP_LOGI(TAG, "Target Validator: RESET");
                 break;
             }
             case VLD_SETUP: {
                 if (read_9(NULL) != checksum) continue;
                 bool phys = (phys_validator.state != INACTIVE_STATE);
+                // Report the real validator's country/currency code so the VMC
+                // accepts it. Hardcoding 0xFFFF (unknown) makes many machines
+                // display "NOTE INCOMPAT". Fall back to the configured currency
+                // only while no physical device is bridged.
+                uint16_t vld_cc = phys ? phys_validator.country_code : CONFIG_MDB_CURRENCY_CODE;
                 payload[0]  = phys ? phys_validator.feature_level : 0x01;
-                payload[1]  = 0xFF; payload[2] = 0xFF;
+                payload[1]  = vld_cc >> 8; payload[2] = vld_cc & 0xFF;
                 payload[3]  = phys ? (phys_validator.scale_factor >> 8)  : (VALIDATOR_DEFAULT_SCALE_FACTOR >> 8);
                 payload[4]  = phys ? (phys_validator.scale_factor & 0xFF) : (VALIDATOR_DEFAULT_SCALE_FACTOR & 0xFF);
                 payload[5]  = phys ? phys_validator.decimal_places : 2;
@@ -1132,14 +1310,12 @@ void mdb_target_task(void *pvParameters) {
                 for (int i = 0; i < 16; i++)
                     payload[11 + i] = phys ? phys_validator.bill_credit[i] : VALIDATOR_DEFAULT_BILL_CREDIT[i];
                 available_tx = 27;
-                ESP_LOGI(TAG, "Target Validator: SETUP (phys=%d)", phys);
                 break;
             }
-            case VLD_SECURITY: {
+            case VLD_SECURITY:
                 read_9(&checksum); read_9(&checksum);
                 if (read_9(NULL) != checksum) continue;
                 break;
-            }
             case VLD_POLL: {
                 if (read_9(NULL) != checksum) continue;
                 bill_stack_evt_t stk;
@@ -1152,8 +1328,8 @@ void mdb_target_task(void *pvParameters) {
                 }
                 if (bill_reset_todo) {
                     bill_reset_todo = false;
-                    payload[0]     = 0x06;
-                    available_tx   = 1;
+                    payload[0]   = 0x06;
+                    available_tx = 1;
                 } else {
                     while (bill_poll_q_head != bill_poll_q_tail && available_tx < 16) {
                         payload[available_tx++] = bill_poll_q[bill_poll_q_tail];
@@ -1170,7 +1346,6 @@ void mdb_target_task(void *pvParameters) {
                 bill_escrow_enable = ((uint16_t)esc_h << 8) | esc_l;
                 bill_from_target_evt_t req = { BILL_REQ_TYPE_ENABLE, bill_enable, bill_escrow_enable, 0 };
                 xQueueSend(bill_from_target_queue, &req, 0);
-                ESP_LOGI(TAG, "Target Validator: BILL_TYPE enable=0x%04X", bill_enable);
                 break;
             }
             case VLD_ESCROW: {
@@ -1203,7 +1378,6 @@ void mdb_target_task(void *pvParameters) {
             }
             default: continue;
             }
-
         } else {
             continue;
         }
@@ -1212,28 +1386,108 @@ void mdb_target_task(void *pvParameters) {
     }
 }
 
-void app_main(void) {
-    cashless_to_target_queue   = xQueueCreate(4,  sizeof(cashless_to_target_evt_t));
-    cashless_from_target_queue = xQueueCreate(4,  sizeof(cashless_from_target_evt_t));
-    coin_to_target_queue       = xQueueCreate(16, sizeof(coin_deposit_evt_t));
-    coin_from_target_queue     = xQueueCreate(4,  sizeof(coin_from_target_evt_t));
-    bill_to_target_queue       = xQueueCreate(16, sizeof(bill_stack_evt_t));
-    bill_from_target_queue     = xQueueCreate(4,  sizeof(bill_from_target_evt_t));
-    mdb_rx_queue               = xQueueCreate(64, sizeof(uint16_t));
+//------------------------------------------------------------------------//
+// app_main
+//------------------------------------------------------------------------//
 
-    // Controller port: UART2, 9600 baud, parity-emulated 9th (mode) bit.
+void app_main(void) {
+    //---- Queues ----
+    coin_to_target_queue   = xQueueCreate(16, sizeof(coin_deposit_evt_t));
+    coin_from_target_queue = xQueueCreate(4,  sizeof(coin_from_target_evt_t));
+    bill_to_target_queue   = xQueueCreate(16, sizeof(bill_stack_evt_t));
+    bill_from_target_queue = xQueueCreate(4,  sizeof(bill_from_target_evt_t));
+    mdb_session_queue      = xQueueCreate(1,  sizeof(uint16_t));
+    mdb_rx_queue           = xQueueCreate(64, sizeof(uint16_t));
+
+    xLedEventGroup = xEventGroupCreate();
+
+    //---- LED WS2812 ----
+    led_strip_config_t strip_config = {
+        .strip_gpio_num = PIN_MDB_LED,
+        .max_leds = 1,
+        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
+        .led_model = LED_MODEL_WS2812,
+        .flags.invert_out = false,
+    };
+    led_strip_rmt_config_t rmt_config = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 10000000,
+        .mem_block_symbols = 64,
+    };
+    led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip);
+    xTaskCreate(led_status_task, "led_status_task", 2048, NULL, 1, NULL);
+    xEventGroupSetBits(xLedEventGroup, BIT_STATUS_TRIGGER);
+
+    //---- NVS ----
+    nvs_flash_init();
+
+    char myhost[64];
+    strcpy(myhost, "0.vmflow.xyz");
+
+    nvs_handle_t h;
+    if (nvs_open("vmflow", NVS_READONLY, &h) == ESP_OK) {
+        size_t s_len = 0;
+        if (nvs_get_str(h, "passkey", NULL, &s_len) == ESP_OK) {
+            nvs_get_str(h, "passkey", my_passkey, &s_len);
+            if (nvs_get_str(h, "domain", NULL, &s_len) == ESP_OK) {
+                nvs_get_str(h, "domain", my_subdomain, &s_len);
+                snprintf(myhost, sizeof(myhost), "%s.vmflow.xyz", my_subdomain);
+                xEventGroupSetBits(xLedEventGroup,
+                    BIT_STATUS_PSSKEY | BIT_STATUS_DOMAIN | BIT_STATUS_TRIGGER);
+            }
+        }
+        nvs_close(h);
+    }
+
+    rpc_auth_set_key(my_passkey);
+
+    //---- Network stack ----
+    esp_netif_init();
+    esp_event_loop_create_default();
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&cfg);
+
+    esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL, NULL);
+    esp_event_handler_instance_register(IP_EVENT,   ESP_EVENT_ANY_ID, ip_event_handler,   NULL, NULL);
+
+    const esp_timer_create_args_t wifi_timer_args = { .callback = wifi_retry_cb, .name = "wifi_retry" };
+    esp_timer_create(&wifi_timer_args, &wifi_retry_timer);
+
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_start();
+
+    //---- SNTP ----
+    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_init();
+
+    //---- BLE — config provisioning + payment ----
+    ble_init(myhost, ble_event_handler, ble_pax_event_handler);
+
+    esp_timer_handle_t pax_timer;
+    const esp_timer_create_args_t pax_args = {
+        .callback = &ble_scan_start,
+        .arg      = (void *)(uintptr_t)PAX_SCAN_DURATION_SEC,
+        .name     = "paxcounter",
+    };
+    esp_timer_create(&pax_args, &pax_timer);
+    esp_timer_start_periodic(pax_timer, PAX_SCAN_INTERVAL_US);
+
+    //---- Controller UART2 ----
     uart_config_t uart_cfg = {
-        .baud_rate  = 9600,
-        .data_bits  = UART_DATA_8_BITS,
-        .parity     = UART_PARITY_EVEN,
-        .stop_bits  = UART_STOP_BITS_1,
-        .flow_ctrl  = UART_HW_FLOWCTRL_DISABLE,
+        .baud_rate = 9600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity    = UART_PARITY_EVEN,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
     };
     uart_param_config(UART_NUM_2, &uart_cfg);
     uart_set_pin(UART_NUM_2, PIN_CONTROLLER_TX, PIN_CONTROLLER_RX, -1, -1);
     uart_driver_install(UART_NUM_2, 256, 256, 0, NULL, 0);
 
-    // Target port: bit-banged GPIO.
+    //---- Target GPIO ----
     gpio_config_t rx_cfg = {
         .pin_bit_mask = 1ULL << PIN_TARGET_RX,
         .mode         = GPIO_MODE_INPUT,
@@ -1242,15 +1496,31 @@ void app_main(void) {
     };
     gpio_config(&rx_cfg);
 
-    gpio_config_t tx_cfg = {
-        .pin_bit_mask = 1ULL << PIN_TARGET_TX,
-        .mode         = GPIO_MODE_OUTPUT,
-    };
+    gpio_config_t tx_cfg = { .pin_bit_mask = 1ULL << PIN_TARGET_TX, .mode = GPIO_MODE_OUTPUT };
     gpio_config(&tx_cfg);
     gpio_set_level(PIN_TARGET_TX, 1);
 
-    // Target task on core 1: bit-bang ISR timing must be isolated from core-0
-    // interrupts. Controller task on core 0: uses only UART hardware.
     xTaskCreatePinnedToCore(mdb_controller_task, "controller_task", 4096, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(mdb_target_task,     "target_task",     4096, NULL, 1, NULL, 1);
+
+    //---- MQTT ----
+    char lwt_topic[64];
+    snprintf(lwt_topic, sizeof(lwt_topic), "domain.vmflow.xyz/%s/status", my_subdomain);
+
+    const esp_mqtt_client_config_t mqtt_cfg = {
+        .broker.address.uri              = "mqtt://mqtt.vmflow.xyz",
+        .session.last_will.topic         = lwt_topic,
+        .session.last_will.msg           = "offline",
+        .session.last_will.qos           = 1,
+        .session.last_will.retain        = 1,
+        .session.keepalive               = 120,
+        .network.timeout_ms              = 30000,
+        .network.reconnect_timeout_ms    = 15000,
+        .buffer.size                     = 2048,
+        .buffer.out_size                 = 6144,
+    };
+
+    mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
+    esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    esp_mqtt_client_start(mqtt_client);
 }
