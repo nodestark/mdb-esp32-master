@@ -144,6 +144,7 @@ typedef struct {
     uint16_t       bill_stacker_capacity;
     uint8_t        bill_credit[16];
     uint16_t       stacker_count;
+    uint32_t       stacker_value;   // sum of bill_credit of bills stacked since boot (scale units)
     bool           stacker_full;
     uint8_t        poll_fail_count;
     device_state_t state;
@@ -499,19 +500,30 @@ static void ip_event_handler(void *arg, esp_event_base_t base,
 // MQTT / RPC
 //------------------------------------------------------------------------//
 
+// Money currently held in the coin changer tubes, in cents (scale=1, dec=2).
+// Live and accurate: derived from the physical changer's tube counts.
+static uint32_t coin_vault_cents(void) {
+    if (phys_changer.state == INACTIVE_STATE || phys_changer.scale_factor == 0)
+        return 0;
+    uint32_t raw = 0;
+    for (int i = 0; i < 16; i++)
+        raw += (uint32_t)phys_changer.tube_counts[i] * phys_changer.coin_credit[i];
+    return (uint32_t)TO_SCALE_FACTOR(
+        FROM_SCALE_FACTOR(raw, phys_changer.scale_factor, phys_changer.decimal_places), 1, 2);
+}
+
+// Money in the bill stacker, in cents. Best-effort: MDB does not report a
+// stacked bill's denomination, so this sums bills seen stacked since boot and
+// therefore resets on power cycle / stacker emptying.
+static uint32_t bill_vault_cents(void) {
+    if (phys_validator.scale_factor == 0) return 0;
+    return (uint32_t)TO_SCALE_FACTOR(
+        FROM_SCALE_FACTOR(phys_validator.stacker_value,
+                          phys_validator.scale_factor, phys_validator.decimal_places), 1, 2);
+}
+
 static void rpc_publish_info(void) {
     const esp_app_desc_t *app = esp_app_get_description();
-
-    // Coin vault value in cents (scale=1, dec=2)
-    uint32_t coin_vault_cents = 0;
-    if (phys_changer.state != INACTIVE_STATE && phys_changer.scale_factor > 0) {
-        uint32_t raw = 0;
-        for (int i = 0; i < 16; i++)
-            raw += (uint32_t)phys_changer.tube_counts[i] * phys_changer.coin_credit[i];
-        coin_vault_cents = (uint32_t)TO_SCALE_FACTOR(
-            FROM_SCALE_FACTOR(raw, phys_changer.scale_factor, phys_changer.decimal_places),
-            1, 2);
-    }
 
     char topic[64], json[512];
     int n = snprintf(json, sizeof(json),
@@ -524,10 +536,24 @@ static void rpc_publish_info(void) {
         (unsigned long)esp_get_free_heap_size(),
         (unsigned long)esp_get_minimum_free_heap_size(),
         s_ip_wifi,
-        (unsigned long)coin_vault_cents,
+        (unsigned long)coin_vault_cents(),
         phys_validator.stacker_count);
 
     snprintf(topic, sizeof(topic), "domain.vmflow.xyz/%s/rpc/info", my_subdomain);
+    esp_mqtt_client_enqueue(mqtt_client, topic, json, n, 1, 0, 1);
+}
+
+// Cash currently in the machine: coin tubes (live) + bill stacker (best-effort).
+static void rpc_publish_safe(void) {
+    char topic[64], json[192];
+    int n = snprintf(json, sizeof(json),
+        "{\"coin_vault_cents\":%lu,\"bill_vault_cents\":%lu,"
+        "\"bill_stacker_count\":%u}",
+        (unsigned long)coin_vault_cents(),
+        (unsigned long)bill_vault_cents(),
+        phys_validator.stacker_count);
+
+    snprintf(topic, sizeof(topic), "domain.vmflow.xyz/%s/rpc/safe", my_subdomain);
     esp_mqtt_client_enqueue(mqtt_client, topic, json, n, 1, 0, 1);
 }
 
@@ -619,6 +645,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
 
         if (strcmp(cmd, "info") == 0) {
             rpc_publish_info();
+        } else if (strcmp(cmd, "safe") == 0) {
+            rpc_publish_safe();
         } else if (strcmp(cmd, "credit") == 0 && has_args) {
             int32_t price_wire = (int32_t)strtol(args, NULL, 10);
             uint16_t funds = (uint16_t)TO_SCALE_FACTOR(
@@ -900,8 +928,12 @@ void mdb_controller_task(void *pvParameters) {
                     for (uint8_t i = 0; i + 1 < len; i++) {
                         uint8_t ev = rx[i];
                         if ((ev & 0x80) && !(ev & 0x40)) {
+                            uint8_t bt = ev & 0x0F;
                             bill_stacked = true;
-                            bill_stack_evt_t evt = { ev & 0x0F };
+                            // Track vault value: MDB never reports a stacked
+                            // bill's denomination, so accumulate it here.
+                            phys_validator.stacker_value += phys_validator.bill_credit[bt];
+                            bill_stack_evt_t evt = { bt };
                             xQueueSend(bill_to_target_queue, &evt, 0);
                         } else if ((ev & 0x90) == 0x90) {
                             tx[0] = (ADDR_VALIDATOR & BIT_ADD_SET) | (VLD_ESCROW & BIT_CMD_SET);
@@ -934,7 +966,18 @@ void mdb_controller_task(void *pvParameters) {
 
 //------------------------------------------------------------------------//
 // mdb_target_task — emulates 0x10/0x08/0x30 toward VMC, always online.
-// Cashless is self-contained: credit via mdb_session_queue, local approve.
+//
+// Cashless business rule (self-contained — no external cashless is bridged):
+//  1. Credit is granted out-of-band (BLE phone app or MQTT `credit` RPC) and
+//     queued in mdb_session_queue.
+//  2. A session may only Begin while the reader is ENABLED by the VMC; the
+//     queued amount becomes the session's available funds.
+//  3. A vend is approved locally iff item_price <= funds (0xFFFF = unlimited
+//     BLE session, deferred to a phone-signed approve). Funds are debited on
+//     Vend Success.
+//  4. Credit is bound to a single session: it is destroyed on Session End and
+//     on Reset, so no balance ever carries over or approves an out-of-session
+//     vend.
 //------------------------------------------------------------------------//
 
 #define COIN_POLL_QSIZE 32
@@ -987,8 +1030,9 @@ void mdb_target_task(void *pvParameters) {
             switch (cmd) {
             case CSHL_RESET: {
                 if (read_9(NULL) != checksum) continue;
-                cshl_reset_todo   = true;
-                target_cshl_state = INACTIVE_STATE;
+                cshl_reset_todo      = true;
+                target_cshl_state    = INACTIVE_STATE;
+                cshl_funds_available = 0;   // credit never survives a reset
                 xEventGroupClearBits(xLedEventGroup, BIT_STATUS_MDB);
                 xEventGroupSetBits(xLedEventGroup, BIT_STATUS_TRIGGER);
                 break;
@@ -1057,8 +1101,9 @@ void mdb_target_task(void *pvParameters) {
                     payload[0] = 0x06;
                     available_tx = 1;
                 } else if (session_end_todo) {
-                    session_end_todo  = false;
-                    target_cshl_state = ENABLED_STATE;
+                    session_end_todo     = false;
+                    target_cshl_state    = ENABLED_STATE;
+                    cshl_funds_available = 0;   // no credit carries into the next session
                     payload[0] = 0x07;
                     available_tx = 1;
                     xEventGroupClearBits(xLedEventGroup, BIT_STATUS_MDB);
