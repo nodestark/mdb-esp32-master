@@ -486,7 +486,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "mdb-vmc-esp32s3.kicad_pro",
+    "filename": "mdb-bridge-esp32s3.kicad_pro",
     "version": 3
   },
   "net_settings": {
