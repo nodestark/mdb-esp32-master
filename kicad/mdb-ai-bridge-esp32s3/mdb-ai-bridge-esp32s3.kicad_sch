@@ -10106,6 +10106,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC#" "C510949"
+			(at 0 0 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(property "Datasheet" "http://ww1.microchip.com/downloads/en/DeviceDoc/00001692C.pdf"
 			(at 391.16 107.95 0)
 			(effects
@@ -13258,6 +13267,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC#" "C6186"
+			(at 0 0 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(property "Datasheet" "http://www.advanced-monolithic.com/pdf/ds1117.pdf"
 			(at 386.08 347.98 0)
 			(effects
@@ -14526,6 +14544,15 @@
 		)
 		(property "Footprint" "MountingHole:MountingHole_2.1mm"
 			(at 560.07 34.29 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC#" ""
+			(at 0 0 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -20363,6 +20390,15 @@
 		)
 		(property "Footprint" "RF_Antenna:Texas_SWRA117D_2.4GHz_Left"
 			(at 374.65 161.29 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC#" ""
+			(at 0 0 0)
 			(effects
 				(font
 					(size 1.27 1.27)
