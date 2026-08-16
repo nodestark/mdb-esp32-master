@@ -5,5 +5,18 @@ build/
 managed_components/
 
 # sdkconfig backups
-sdkconfig.old
 *.old
+
+# KiCad
+*-backups/
+_autosave-*
+*.lck
+fp-info-cache
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
