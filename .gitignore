@@ -12,6 +12,7 @@ managed_components/
 _autosave-*
 *.lck
 *.kicad_prl
+*.kicad_pcb.bak
 fp-info-cache
 
 # Editor / OS
