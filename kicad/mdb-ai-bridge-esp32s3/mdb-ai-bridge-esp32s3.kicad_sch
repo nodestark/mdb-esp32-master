@@ -5590,12 +5590,6 @@
 		(uuid "d71f8088-bdfd-4e5c-9648-ff8a6fec2f83")
 	)
 	(junction
-		(at 285.75 90.17)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "d83bd751-1d9e-4e22-b8ee-b6f77590def9")
-	)
-	(junction
 		(at 392.43 238.76)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -5690,12 +5684,6 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "f3d7ade9-a73b-45a3-8d04-cdb645dcdbc2")
-	)
-	(junction
-		(at 285.75 92.71)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "f42841d7-3b83-42a2-8e91-f57d1d5ae830")
 	)
 	(junction
 		(at 542.29 222.25)
@@ -6387,16 +6375,6 @@
 	)
 	(wire
 		(pts
-			(xy 306.07 87.63) (xy 285.75 87.63)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "17f8c802-fd33-4aa6-924c-3046c3baa769")
-	)
-	(wire
-		(pts
 			(xy 295.91 92.71) (xy 322.58 92.71)
 		)
 		(stroke
@@ -6687,16 +6665,6 @@
 	)
 	(wire
 		(pts
-			(xy 304.8 90.17) (xy 322.58 90.17)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "28d4601f-6c12-4a60-b8c4-8977d6cca782")
-	)
-	(wire
-		(pts
 			(xy 421.64 43.18) (xy 434.34 43.18)
 		)
 		(stroke
@@ -6754,16 +6722,6 @@
 			(type default)
 		)
 		(uuid "2c5e49f0-874b-4f91-b39e-8fccee2bf3e1")
-	)
-	(wire
-		(pts
-			(xy 285.75 90.17) (xy 297.18 90.17)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "2c80b89a-f850-49a1-957c-3b6133bd0bcd")
 	)
 	(wire
 		(pts
@@ -7134,16 +7092,6 @@
 			(type default)
 		)
 		(uuid "4132410d-1c12-4b89-b7fc-e6541ef7c264")
-	)
-	(wire
-		(pts
-			(xy 313.69 87.63) (xy 322.58 87.63)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "413668b7-6381-4dd6-87e8-7ff364089642")
 	)
 	(wire
 		(pts
@@ -7624,16 +7572,6 @@
 			(type default)
 		)
 		(uuid "6324f1c4-0049-48e4-a945-cea76f53d345")
-	)
-	(wire
-		(pts
-			(xy 285.75 92.71) (xy 288.29 92.71)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "63f8ffac-b760-4e69-afe9-dfe69bf976e6")
 	)
 	(wire
 		(pts
@@ -8377,7 +8315,7 @@
 	)
 	(wire
 		(pts
-			(xy 284.48 92.71) (xy 285.75 92.71)
+			(xy 284.48 92.71) (xy 288.29 92.71)
 		)
 		(stroke
 			(width 0)
@@ -9457,16 +9395,6 @@
 	)
 	(wire
 		(pts
-			(xy 285.75 87.63) (xy 285.75 90.17)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "e4289592-9171-491a-be7a-e55b749274ae")
-	)
-	(wire
-		(pts
 			(xy 137.16 63.5) (xy 139.7 63.5)
 		)
 		(stroke
@@ -9887,6 +9815,16 @@
 	)
 	(wire
 		(pts
+			(xy 306.07 90.17) (xy 322.58 90.17)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f94f9684-b918-4483-968b-641e41b0f39c")
+	)
+	(wire
+		(pts
 			(xy 217.17 355.6) (xy 217.17 353.06)
 		)
 		(stroke
@@ -9917,16 +9855,6 @@
 	)
 	(wire
 		(pts
-			(xy 285.75 90.17) (xy 285.75 92.71)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "fce09693-c44a-4963-b78a-e1725024c5e1")
-	)
-	(wire
-		(pts
 			(xy 59.69 149.86) (xy 66.04 149.86)
 		)
 		(stroke
@@ -9944,6 +9872,16 @@
 			(type default)
 		)
 		(uuid "fddc352c-314a-4891-8bd6-eded2452e53a")
+	)
+	(wire
+		(pts
+			(xy 306.07 87.63) (xy 322.58 87.63)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "fee32146-2aa9-4d6a-9a99-a39985ed6492")
 	)
 	(wire
 		(pts
@@ -9984,6 +9922,16 @@
 			(justify left bottom)
 		)
 		(uuid "0c1e3611-74e2-438c-97e8-1949f7d965cc")
+	)
+	(label "io11"
+		(at 306.07 87.63 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "16add5d2-9879-4d03-ad7a-2a416103a814")
 	)
 	(label "usb-_3"
 		(at 382.27 69.85 0)
@@ -10474,6 +10422,16 @@
 			(justify left bottom)
 		)
 		(uuid "e6e4a41d-d52f-4268-8e39-a20c798b5aa5")
+	)
+	(label "io10"
+		(at 306.07 90.17 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "e7a445ae-1fe9-409e-be4f-26c7658ed7a6")
 	)
 	(label "io13"
 		(at 505.46 222.25 0)
@@ -15104,82 +15062,6 @@
 			(project "mdb-ai-bridge-esp32s3"
 				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
 					(reference "C9")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:R")
-		(at 309.88 87.63 90)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(uuid "53696881-7c74-4a53-b4b0-c80cdc98b499")
-		(property "Reference" "R2"
-			(at 309.88 81.28 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "100k"
-			(at 309.88 83.82 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
-			(at 309.88 89.408 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 309.88 87.63 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" ""
-			(at 309.88 87.63 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "LCSC#" "C25803"
-			(at 309.88 87.63 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "54203fd9-8803-49d6-950f-02526bff3b57")
-		)
-		(pin "2"
-			(uuid "9ca91f12-125d-4d87-a199-96cbdf111e89")
-		)
-		(instances
-			(project "mdb-ai-bridge-esp32s3"
-				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
-					(reference "R2")
 					(unit 1)
 				)
 			)
@@ -24156,82 +24038,6 @@
 			(project "mdb-ai-bridge-esp32s3"
 				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
 					(reference "#PWR036")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:R")
-		(at 300.99 90.17 90)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(uuid "f7a33ebd-6c24-4673-8504-fcc358bb41cd")
-		(property "Reference" "R3"
-			(at 300.99 83.82 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "100k"
-			(at 300.99 86.36 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
-			(at 300.99 91.948 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 300.99 90.17 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" ""
-			(at 300.99 90.17 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "LCSC#" "C25803"
-			(at 300.99 90.17 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "6c2363bb-3aae-4e8f-8ff7-541cd830bbc0")
-		)
-		(pin "2"
-			(uuid "c13b543a-8e7f-45e3-a0a7-7f86860306c1")
-		)
-		(instances
-			(project "mdb-ai-bridge-esp32s3"
-				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
-					(reference "R3")
 					(unit 1)
 				)
 			)
