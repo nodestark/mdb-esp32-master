@@ -8981,7 +8981,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "22pF"
+		(property "Value" "22uF"
 			(at 368.3 193.0399 0)
 			(effects
 				(font
@@ -9017,7 +9017,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC#" "C105620"
+		(property "LCSC#" ""
 			(at 364.49 191.77 90)
 			(effects
 				(font
@@ -9860,7 +9860,7 @@
 				)
 			)
 		)
-		(property "Value" "4.7uF"
+		(property "Value" "4.7uH"
 			(at 332.74 170.18 90)
 			(effects
 				(font
