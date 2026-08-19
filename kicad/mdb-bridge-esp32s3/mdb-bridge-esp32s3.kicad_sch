@@ -9017,7 +9017,7 @@
 				(hide yes)
 			)
 		)
-		(property "LCSC#" ""
+		(property "LCSC#" "C15500"
 			(at 364.49 191.77 90)
 			(effects
 				(font
