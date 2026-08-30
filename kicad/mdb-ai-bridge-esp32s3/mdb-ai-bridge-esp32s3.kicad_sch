@@ -5,6 +5,113 @@
 	(uuid "51cbea2e-46d2-4ff4-a8d6-333c056656c8")
 	(paper "A2")
 	(lib_symbols
+		(symbol "Connector:TestPoint"
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(offset 0.762)
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "TP"
+				(at 0 6.858 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" "TestPoint"
+				(at 0 5.08 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" ""
+				(at 5.08 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "~"
+				(at 5.08 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "test point"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "test point tp"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_fp_filters" "Pin* Test*"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "TestPoint_0_1"
+				(circle
+					(center 0 3.302)
+					(radius 0.762)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "TestPoint_1_1"
+				(pin passive line
+					(at 0 0 90)
+					(length 2.54)
+					(name "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
 		(symbol "Connector:USB_C_Receptacle_USB2.0_16P"
 			(pin_names
 				(offset 1.016)
@@ -5380,6 +5487,12 @@
 		(uuid "2edcf628-7fbf-4cc7-aa58-3f5b6db8f50b")
 	)
 	(junction
+		(at 406.4 181.61)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "30075c79-9785-455a-b673-84afade7fb58")
+	)
+	(junction
 		(at 419.1 191.77)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -5504,6 +5617,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "a16a1d71-5d44-463d-858a-f0ef61f3cd72")
+	)
+	(junction
+		(at 68.58 294.64)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "a5e8877d-d2af-49f8-890f-e464e5154b9e")
 	)
 	(junction
 		(at 405.13 238.76)
@@ -6221,16 +6340,6 @@
 	)
 	(wire
 		(pts
-			(xy 83.82 76.2) (xy 88.9 76.2)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "1031b4a8-bdfd-402c-98e3-c58b2f909870")
-	)
-	(wire
-		(pts
 			(xy 165.1 302.26) (xy 176.53 302.26)
 		)
 		(stroke
@@ -6368,6 +6477,16 @@
 			(type default)
 		)
 		(uuid "178db889-f494-4ec3-b426-f22df110b9fc")
+	)
+	(wire
+		(pts
+			(xy 306.07 85.09) (xy 307.34 85.09)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "19523cfc-32cc-46af-8b2b-ce98f811887a")
 	)
 	(wire
 		(pts
@@ -6541,7 +6660,7 @@
 	)
 	(wire
 		(pts
-			(xy 304.8 72.39) (xy 304.8 81.28)
+			(xy 302.26 72.39) (xy 302.26 81.28)
 		)
 		(stroke
 			(width 0)
@@ -6961,16 +7080,6 @@
 	)
 	(wire
 		(pts
-			(xy 63.5 290.83) (xy 63.5 294.64)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "37dd981d-66b9-4437-9aa3-f62da8382bca")
-	)
-	(wire
-		(pts
 			(xy 67.31 364.49) (xy 82.55 364.49)
 		)
 		(stroke
@@ -7081,7 +7190,7 @@
 	)
 	(wire
 		(pts
-			(xy 401.32 181.61) (xy 436.88 181.61)
+			(xy 401.32 181.61) (xy 406.4 181.61)
 		)
 		(stroke
 			(width 0)
@@ -7128,16 +7237,6 @@
 			(type default)
 		)
 		(uuid "43e06e34-4075-4905-8d7b-fd724f04a923")
-	)
-	(wire
-		(pts
-			(xy 66.04 290.83) (xy 63.5 290.83)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "4413c6f9-894b-4c4a-863a-abb59708044e")
 	)
 	(wire
 		(pts
@@ -7271,16 +7370,6 @@
 	)
 	(wire
 		(pts
-			(xy 403.86 177.8) (xy 401.32 177.8)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "50acdcc5-382f-4b17-b8a0-a23e736a544f")
-	)
-	(wire
-		(pts
 			(xy 406.4 49.53) (xy 401.32 49.53)
 		)
 		(stroke
@@ -7361,16 +7450,6 @@
 	)
 	(wire
 		(pts
-			(xy 76.2 290.83) (xy 81.28 290.83)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "56ab6def-c743-48fb-882d-7a65f980b9b7")
-	)
-	(wire
-		(pts
 			(xy 283.21 81.28) (xy 283.21 78.74)
 		)
 		(stroke
@@ -7438,6 +7517,16 @@
 			(type default)
 		)
 		(uuid "5a2553fe-c8a4-41e6-885a-270e1b3e9a6c")
+	)
+	(wire
+		(pts
+			(xy 406.4 180.34) (xy 406.4 181.61)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "5ae92ff8-d357-4e0e-9d0a-f01ddc8b206c")
 	)
 	(wire
 		(pts
@@ -7661,6 +7750,16 @@
 	)
 	(wire
 		(pts
+			(xy 406.4 181.61) (xy 436.88 181.61)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "67580d3f-aadf-4995-8f11-c535231fbe21")
+	)
+	(wire
+		(pts
 			(xy 39.37 137.16) (xy 39.37 139.7)
 		)
 		(stroke
@@ -7781,6 +7880,26 @@
 	)
 	(wire
 		(pts
+			(xy 312.42 86.36) (xy 313.69 86.36)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "70d9035f-5822-4943-972a-1710ca0af1ba")
+	)
+	(wire
+		(pts
+			(xy 68.58 292.1) (xy 68.58 294.64)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "717925e3-1c8d-4d86-8125-4fdfa74fdf33")
+	)
+	(wire
+		(pts
 			(xy 167.64 330.2) (xy 165.1 330.2)
 		)
 		(stroke
@@ -7858,16 +7977,6 @@
 			(type default)
 		)
 		(uuid "7983d85e-e1fb-42cc-9fb3-49d93acaff44")
-	)
-	(wire
-		(pts
-			(xy 401.32 177.8) (xy 401.32 181.61)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "7a27d5d0-d11d-4218-9572-78fd883108df")
 	)
 	(wire
 		(pts
@@ -8201,7 +8310,7 @@
 	)
 	(wire
 		(pts
-			(xy 322.58 72.39) (xy 304.8 72.39)
+			(xy 322.58 72.39) (xy 302.26 72.39)
 		)
 		(stroke
 			(width 0)
@@ -8881,16 +8990,6 @@
 	)
 	(wire
 		(pts
-			(xy 414.02 177.8) (xy 419.1 177.8)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "be39af04-10bb-4603-8e8a-0f107b42a1e4")
-	)
-	(wire
-		(pts
 			(xy 81.28 318.77) (xy 81.28 316.23)
 		)
 		(stroke
@@ -9031,7 +9130,7 @@
 	)
 	(wire
 		(pts
-			(xy 63.5 294.64) (xy 99.06 294.64)
+			(xy 63.5 294.64) (xy 68.58 294.64)
 		)
 		(stroke
 			(width 0)
@@ -9341,7 +9440,7 @@
 	)
 	(wire
 		(pts
-			(xy 304.8 81.28) (xy 283.21 81.28)
+			(xy 302.26 81.28) (xy 283.21 81.28)
 		)
 		(stroke
 			(width 0)
@@ -9418,6 +9517,16 @@
 			(type default)
 		)
 		(uuid "e1bc2368-7168-4053-b1e9-e1ab913a679c")
+	)
+	(wire
+		(pts
+			(xy 68.58 294.64) (xy 99.06 294.64)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e1c63d6c-3b34-4d08-84c9-3a149cab82ff")
 	)
 	(wire
 		(pts
@@ -9898,16 +10007,6 @@
 			(type default)
 		)
 		(uuid "f88246c4-b160-4bff-84a7-cec79599b85c")
-	)
-	(wire
-		(pts
-			(xy 73.66 76.2) (xy 71.12 76.2)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "f88eca22-5e39-4888-916e-571fe46b9bfb")
 	)
 	(wire
 		(pts
@@ -12275,83 +12374,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Switch:SW_Push")
-		(at 71.12 290.83 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "23cb7741-00b5-40fe-9254-bf037a989028")
-		(property "Reference" "SW6"
-			(at 71.12 283.21 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "SW_Push"
-			(at 71.12 285.75 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS"
-			(at 71.12 285.75 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 71.12 285.75 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" ""
-			(at 71.12 290.83 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "LCSC#" "C42435421"
-			(at 71.12 290.83 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "c6d1d130-2b31-48ea-a1db-22ad72c0cd21")
-		)
-		(pin "2"
-			(uuid "b9a654cc-6302-4512-968c-fd6d6351ee16")
-		)
-		(instances
-			(project "mdb-ai-bridge-esp32s3"
-				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
-					(reference "SW6")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "Device:C")
 		(at 401.32 186.69 0)
 		(unit 1)
@@ -13429,6 +13451,73 @@
 			(project "mdb-ai-bridge-esp32s3"
 				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
 					(reference "#PWR099")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Connector:TestPoint")
+		(at 68.58 292.1 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "3374f58f-1857-4bff-abf1-17ac6200d4e5")
+		(property "Reference" "TP3"
+			(at 71.12 287.5279 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "TestPoint"
+			(at 71.12 290.0679 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "TestPoint:TestPoint_Pad_D1.5mm"
+			(at 73.66 292.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 73.66 292.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 68.58 292.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "364f62cf-dd69-47f5-b4c6-10dd271d23c6")
+		)
+		(instances
+			(project "mdb-ai-bridge-esp32s3"
+				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
+					(reference "TP3")
 					(unit 1)
 				)
 			)
@@ -14991,6 +15080,73 @@
 			(project "mdb-ai-bridge-esp32s3"
 				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
 					(reference "C35")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Connector:TestPoint")
+		(at 71.12 76.2 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "488134fe-419e-46ee-b29a-a0cde7d1b755")
+		(property "Reference" "TP1"
+			(at 73.66 71.6279 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "TestPoint"
+			(at 73.66 74.1679 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "TestPoint:TestPoint_Pad_D1.5mm"
+			(at 76.2 76.2 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 76.2 76.2 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 71.12 76.2 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "56f923f9-aba9-48ae-8ea8-fec5cb519cba")
+		)
+		(instances
+			(project ""
+				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
+					(reference "TP1")
 					(unit 1)
 				)
 			)
@@ -16906,73 +17062,6 @@
 		)
 	)
 	(symbol
-		(lib_id "power:GND")
-		(at 419.1 177.8 90)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "71ed4c2b-a1c0-42b8-afbe-616a2948e446")
-		(property "Reference" "#PWR0139"
-			(at 425.45 177.8 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Value" "GND"
-			(at 422.91 177.7999 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-		(property "Footprint" ""
-			(at 419.1 177.8 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" ""
-			(at 419.1 177.8 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" ""
-			(at 419.1 177.8 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "cd285601-e4dc-4a1a-8a87-a34744e743f2")
-		)
-		(instances
-			(project "mdb-ai-bridge-esp32s3"
-				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
-					(reference "#PWR0139")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "power:+3V3")
 		(at 462.28 339.09 180)
 		(unit 1)
@@ -17105,7 +17194,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 307.34 85.09 270)
+		(at 306.07 85.09 270)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -17113,7 +17202,7 @@
 		(dnp no)
 		(uuid "72755644-5055-4d39-bb79-ea0aeaccb1e4")
 		(property "Reference" "#PWR06"
-			(at 300.99 85.09 0)
+			(at 299.72 85.09 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -17122,7 +17211,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 302.26 85.09 0)
+			(at 300.99 85.09 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -17130,7 +17219,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 307.34 85.09 0)
+			(at 306.07 85.09 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -17139,7 +17228,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 307.34 85.09 0)
+			(at 306.07 85.09 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -17148,7 +17237,7 @@
 			)
 		)
 		(property "Description" ""
-			(at 307.34 85.09 0)
+			(at 306.07 85.09 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -17986,83 +18075,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Switch:SW_Push")
-		(at 408.94 177.8 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "84e8ff66-78fa-4e77-baac-b7d96842217f")
-		(property "Reference" "SW8"
-			(at 408.94 170.18 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "SW_Push"
-			(at 408.94 172.72 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS"
-			(at 408.94 172.72 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 408.94 172.72 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" ""
-			(at 408.94 177.8 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "LCSC#" "C42435421"
-			(at 408.94 177.8 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "ddd5febf-f944-461a-b6c4-47d3007498ba")
-		)
-		(pin "2"
-			(uuid "2bc653af-f446-483e-a01a-ed3ca72305d8")
-		)
-		(instances
-			(project "mdb-ai-bridge-esp32s3"
-				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
-					(reference "SW8")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "Device:C")
 		(at 82.55 370.84 0)
 		(unit 1)
@@ -18761,7 +18773,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 313.69 86.36 270)
+		(at 312.42 86.36 270)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -18769,7 +18781,7 @@
 		(dnp no)
 		(uuid "8b4d46e7-c0b6-4208-92ca-dc0ce0a8aadc")
 		(property "Reference" "#PWR018"
-			(at 307.34 86.36 0)
+			(at 306.07 86.36 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -18778,7 +18790,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 308.61 86.36 0)
+			(at 307.34 86.36 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -18786,7 +18798,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 313.69 86.36 0)
+			(at 312.42 86.36 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -18795,7 +18807,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 313.69 86.36 0)
+			(at 312.42 86.36 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -18804,7 +18816,7 @@
 			)
 		)
 		(property "Description" ""
-			(at 313.69 86.36 0)
+			(at 312.42 86.36 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -21709,73 +21721,6 @@
 		)
 	)
 	(symbol
-		(lib_id "power:GND")
-		(at 88.9 76.2 90)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "b8688c3a-4697-4383-ba60-988bdb3a44cf")
-		(property "Reference" "#PWR0138"
-			(at 95.25 76.2 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Value" "GND"
-			(at 92.71 76.1999 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-		(property "Footprint" ""
-			(at 88.9 76.2 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" ""
-			(at 88.9 76.2 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" ""
-			(at 88.9 76.2 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "4ef1fe72-c921-41df-8911-89775d5af8b5")
-		)
-		(instances
-			(project "mdb-ai-bridge-esp32s3"
-				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
-					(reference "#PWR0138")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "PCM_Espressif:ESP32-S3")
 		(at 469.9 209.55 0)
 		(unit 1)
@@ -24101,83 +24046,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Switch:SW_Push")
-		(at 78.74 76.2 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "dc547ba8-5786-49f2-9a4d-3dd365a625dc")
-		(property "Reference" "SW7"
-			(at 78.74 68.58 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "SW_Push"
-			(at 78.74 71.12 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS"
-			(at 78.74 71.12 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 78.74 71.12 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" ""
-			(at 78.74 76.2 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "LCSC#" "C42435421"
-			(at 78.74 76.2 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "e9f51e4b-6ead-4f25-ae06-2ca422e77fcd")
-		)
-		(pin "2"
-			(uuid "220b8c8c-6ec6-416c-b459-808a957b3ce5")
-		)
-		(instances
-			(project "mdb-ai-bridge-esp32s3"
-				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
-					(reference "SW7")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "Device:C")
 		(at 313.69 82.55 180)
 		(unit 1)
@@ -24278,73 +24146,6 @@
 			(project "mdb-ai-bridge-esp32s3"
 				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
 					(reference "C2")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "power:GND")
-		(at 81.28 290.83 90)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "dd630254-6896-442b-b986-5d6ca87e6b6c")
-		(property "Reference" "#PWR0137"
-			(at 87.63 290.83 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Value" "GND"
-			(at 85.09 290.8299 90)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-		(property "Footprint" ""
-			(at 81.28 290.83 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" ""
-			(at 81.28 290.83 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" ""
-			(at 81.28 290.83 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "ef7772bc-7d1d-4133-993d-9d9ccb3b9275")
-		)
-		(instances
-			(project "mdb-ai-bridge-esp32s3"
-				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
-					(reference "#PWR0137")
 					(unit 1)
 				)
 			)
@@ -24859,6 +24660,73 @@
 			(project "mdb-ai-bridge-esp32s3"
 				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
 					(reference "#PWR08")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Connector:TestPoint")
+		(at 406.4 180.34 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "eac478c8-2df8-4aa4-9f11-88c428f6eb05")
+		(property "Reference" "TP2"
+			(at 408.94 175.7679 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "TestPoint"
+			(at 408.94 178.3079 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "TestPoint:TestPoint_Pad_D1.5mm"
+			(at 411.48 180.34 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 411.48 180.34 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 406.4 180.34 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "146e7adc-7f6c-43ef-9811-aeb06c745c87")
+		)
+		(instances
+			(project "mdb-ai-bridge-esp32s3"
+				(path "/51cbea2e-46d2-4ff4-a8d6-333c056656c8"
+					(reference "TP2")
 					(unit 1)
 				)
 			)
