@@ -1,10 +1,9 @@
 # ESP-IDF build output
 build/
-
-# Managed components (restored from idf_component.yml / dependencies.lock)
 managed_components/
 
-# sdkconfig backups
+# sdkconfig backups (base sdkconfig files ARE tracked)
+sdkconfig.old
 *.old
 
 # KiCad
@@ -13,6 +12,7 @@ _autosave-*
 *.lck
 *.kicad_prl
 *.kicad_pcb.bak
+*.kicad_sch.bak
 fp-info-cache
 
 # Editor / OS
