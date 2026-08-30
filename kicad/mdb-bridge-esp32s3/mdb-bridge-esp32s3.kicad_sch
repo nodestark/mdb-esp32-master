@@ -8074,6 +8074,16 @@
 		)
 		(uuid "20ca2781-2d90-481e-96ae-d8e0afb7f221")
 	)
+	(label "vin"
+		(at 101.6 229.87 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "23da4ba5-61a9-40b8-a3a2-18c51f4e6b53")
+	)
 	(label "io10"
 		(at 160.02 152.4 0)
 		(effects
@@ -8353,17 +8363,6 @@
 			(justify left bottom)
 		)
 		(uuid "ffbdcf14-78f5-464c-b136-398299bb64ad")
-	)
-	(hierarchical_label "vin"
-		(shape input)
-		(at 101.6 229.87 180)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "3751ffd7-948c-4a5c-9907-7274dae760e6")
 	)
 	(symbol
 		(lib_id "Device:C")
